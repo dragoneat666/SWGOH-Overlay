@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The expanded panel. It has three "screens" stacked as ViewFlipper-style
+     visibility-toggled containers (home / team select / counter results) -
+     see OverlayService.kt for how these are shown/hidden. Kept as plain
+     FrameLayout children rather than a real ViewFlipper/Fragment setup for
+     now, to keep this first pass simple; revisit if it gets unwieldy. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="300dp"
+    android:layout_height="wrap_content"
+    android:background="#DD1B1B2E"
+    android:padding="12dp">
+
+    <!-- HOME -->
+    <LinearLayout
+        android:id="@+id/screenHome"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="visible">
+
+        <Button
+            android:id="@+id/btnScan"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/scan" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#FFFFFF"
+            android:layout_marginTop="12dp"
+            android:text="@string/home_used_squads_label" />
+
+        <TextView
+            android:id="@+id/usedSquadsList"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#CCCCCC"
+            android:text="" />
+    </LinearLayout>
+
+    <!-- TEAM SELECT: which of the 2-3 defending teams are you facing? -->
+    <LinearLayout
+        android:id="@+id/screenTeamSelect"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#FFFFFF"
+            android:text="Which team are you facing?" />
+
+        <!-- Populated at runtime with one button per detected/available team.
+             TODO: this is where automatic team detection from a screenshot
+             plugs in later - see IconMatcher.kt. For now this list is filled
+             from a manual picker. -->
+        <LinearLayout
+            android:id="@+id/teamSelectButtons"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </LinearLayout>
+
+    <!-- COUNTER RESULTS: top 3 recommended squads -->
+    <LinearLayout
+        android:id="@+id/screenCounterResults"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#FFFFFF"
+            android:text="Recommended counters" />
+
+        <!-- Populated at runtime, one row per recommended squad, each row
+             tappable to mark it "used" - see OverlayService.kt -->
+        <LinearLayout
+            android:id="@+id/counterResultsList"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </LinearLayout>
+
+</FrameLayout>
