@@ -1,0 +1,10 @@
+**/node_modules
+frontend/dist
+android
+.git
+.github
+Claude outputs
+**/*.log
+**/.env
+backend/test
+backend/scripts

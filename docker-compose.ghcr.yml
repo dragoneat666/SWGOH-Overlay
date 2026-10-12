@@ -1,0 +1,54 @@
+# Pull-based compose file for Dockge (or anywhere else you want to run the
+# published image instead of building from source). Same three services as
+# docker-compose.yml, just `image:` instead of `build:` for the api.
+#
+# Usage in Dockge: create a new stack, paste this in as its compose file,
+# and add the env vars from .env.example (POSTGRES_USER, POSTGRES_PASSWORD,
+# POSTGRES_DB, API_TOKEN, optionally API_PORT and COMLINK_APP_NAME) in
+# Dockge's env editor for the stack. Nothing else needs copying to the
+# host - the api container creates the database tables itself on first
+# start.
+#
+# The web admin UI is served by the api container: http://<server>:4001/
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  comlink:
+    image: ghcr.io/swgoh-utils/swgoh-comlink:latest
+    restart: unless-stopped
+    environment:
+      APP_NAME: ${COMLINK_APP_NAME:-swgoh-overlay}
+
+  api:
+    image: ghcr.io/dragoneat666/swgoh-overlay-backend:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      API_TOKEN: ${API_TOKEN}
+      COMLINK_URL: http://comlink:3000
+      PORT: 4001
+    ports:
+      - "${API_PORT:-4001}:4001"
+    volumes:
+      - uploads-data:/app/uploads
+
+volumes:
+  db-data:
+  uploads-data:

@@ -1,18 +1,23 @@
 {
   "name": "swgoh-overlay-backend",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "commonjs",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "dev:db": "node scripts/dev-db.mjs",
+    "test": "node --test --test-concurrency=1 \"test/**/*.test.mjs\""
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "pg": "^8.12.0",
-    "multer": "^1.4.5-lts.1",
-    "node-fetch": "^2.7.0",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "express": "^4.22.1",
+    "multer": "^2.0.2",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@electric-sql/pglite-socket": "^0.2.11"
   }
 }

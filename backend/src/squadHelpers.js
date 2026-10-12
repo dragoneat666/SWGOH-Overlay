@@ -1,73 +1,123 @@
 const db = require("./db");
+const { badRequest } = require("./httpError");
 
-// Creates a squad row + its ordered members in one go. unitIds is an ordered
-// array (index 0 = leader). Returns the new squad's id.
-async function createSquad(unitIds) {
-  if (!Array.isArray(unitIds) || unitIds.length === 0) {
-    throw new Error("unitIds must be a non-empty array");
+// GAC fleets are the biggest squad shape: capital ship + 3 starters + 4
+// reinforcements.
+const MAX_SQUAD_SIZE = 8;
+
+// Validates a request body's unit id list: non-empty, integers, no repeats,
+// not over MAX_SQUAD_SIZE. Returns it as a clean int array (index 0 = leader).
+function parseUnitIds(raw, label = "unit_ids") {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw badRequest(`${label} must be a non-empty array of unit ids`);
   }
-
-  const client = await db.pool.connect();
-  try {
-    await client.query("BEGIN");
-
-    const { rows } = await client.query(
-      "INSERT INTO squads DEFAULT VALUES RETURNING id"
-    );
-    const squadId = rows[0].id;
-
-    const values = [];
-    const placeholders = unitIds
-      .map((unitId, i) => {
-        values.push(squadId, unitId, i);
-        const base = i * 3;
-        return `($${base + 1}, $${base + 2}, $${base + 3})`;
-      })
-      .join(", ");
-
-    await client.query(
-      `INSERT INTO squad_members (squad_id, unit_id, position) VALUES ${placeholders}`,
-      values
-    );
-
-    await client.query("COMMIT");
-    return squadId;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
+  const ids = raw.map((v) => Number(v));
+  if (ids.some((id) => !Number.isInteger(id) || id <= 0)) {
+    throw badRequest(`${label} must only contain unit ids`);
   }
+  if (new Set(ids).size !== ids.length) {
+    throw badRequest(`${label} has the same unit more than once`);
+  }
+  if (ids.length > MAX_SQUAD_SIZE) {
+    throw badRequest(`${label} can have at most ${MAX_SQUAD_SIZE} units`);
+  }
+  return ids;
 }
 
-// Returns { id, units: [{id, name, image_path, is_ship}, ...] } in position
-// order (index 0 = leader) for a single squad id.
-async function getSquad(squadId) {
-  const { rows } = await db.query(
-    `SELECT u.id, u.name, u.image_path, u.is_ship
-     FROM squad_members sm
-     JOIN units u ON u.id = sm.unit_id
-     WHERE sm.squad_id = $1
-     ORDER BY sm.position ASC`,
-    [squadId]
-  );
-  return { id: squadId, units: rows };
-}
-
-// Finds an existing squad that has EXACTLY this set of unit ids (order
-// ignored) - used so re-entering "the same defender squad" doesn't create a
-// duplicate squads row every time. Returns the squad id, or null.
-async function findSquadByUnitSet(unitIds) {
-  const { rows } = await db.query(
+// Finds the existing squad with exactly this leader and this set of
+// members (non-leader order ignored). Returns its id, or null. The leader
+// counts as part of a squad's identity because the lead ability changes how
+// a team plays. `queryable` is either `db` or a transaction client.
+async function findSquad(queryable, unitIds) {
+  const { rows } = await queryable.query(
     `SELECT sm.squad_id
      FROM squad_members sm
-     WHERE sm.unit_id = ANY($1::int[])
+     WHERE sm.squad_id IN (
+       SELECT squad_id FROM squad_members WHERE position = 0 AND unit_id = $2
+     )
      GROUP BY sm.squad_id
-     HAVING COUNT(*) = $2
-        AND COUNT(*) = (SELECT COUNT(*) FROM squad_members sm2 WHERE sm2.squad_id = sm.squad_id)`,
-    [unitIds, unitIds.length]
+     HAVING COUNT(*) = $3 AND bool_and(sm.unit_id = ANY($1::int[]))
+     LIMIT 1`,
+    [unitIds, unitIds[0], unitIds.length]
   );
   return rows.length > 0 ? rows[0].squad_id : null;
 }
 
-module.exports = { createSquad, getSquad, findSquadByUnitSet };
+// Squads are shared, immutable rows - re-entering "the same team" reuses
+// the same squad id instead of piling up duplicates. `client` must be a
+// transaction client from db.withTransaction.
+async function findOrCreateSquad(client, unitIds) {
+  const existingId = await findSquad(client, unitIds);
+  if (existingId) return existingId;
+
+  const { rows: created } = await client.query(
+    "INSERT INTO squads DEFAULT VALUES RETURNING id"
+  );
+  const squadId = created[0].id;
+
+  const values = [];
+  const placeholders = unitIds
+    .map((unitId, i) => {
+      values.push(squadId, unitId, i);
+      const base = i * 3;
+      return `($${base + 1}, $${base + 2}, $${base + 3})`;
+    })
+    .join(", ");
+
+  await client.query(
+    `INSERT INTO squad_members (squad_id, unit_id, position) VALUES ${placeholders}`,
+    values
+  );
+  return squadId;
+}
+
+// Removes squads no counter points at any more (left behind after a
+// counter is edited or deleted).
+async function deleteOrphanSquads(client) {
+  await client.query(
+    `DELETE FROM squads s
+     WHERE NOT EXISTS (SELECT 1 FROM counters c WHERE c.defender_squad_id = s.id)
+       AND NOT EXISTS (SELECT 1 FROM counter_recommendations r WHERE r.counter_squad_id = s.id)`
+  );
+}
+
+// Loads many squads in one query. Returns a Map of squad id ->
+// { id, units: [{id, definition_id, name, image_path, is_ship}, ...] }
+// with units in position order (index 0 = leader).
+// definition_id (SWGoH's own unit id string, e.g. "GRANDMASTERYODA") is
+// needed so the Android app can cross-reference a recommended squad's units
+// against the roster pulled from /api/roster/:allyCode, which is keyed by
+// that same definition_id - the internal `id` here is only meaningful
+// within this app's own DB (squad membership, used-squad tracking).
+async function getSquads(squadIds) {
+  const squads = new Map();
+  if (squadIds.length === 0) return squads;
+
+  const { rows } = await db.query(
+    `SELECT sm.squad_id, u.id, u.definition_id, u.name, u.image_path, u.is_ship
+     FROM squad_members sm
+     JOIN units u ON u.id = sm.unit_id
+     WHERE sm.squad_id = ANY($1::int[])
+     ORDER BY sm.squad_id, sm.position ASC`,
+    [squadIds]
+  );
+  for (const id of squadIds) squads.set(id, { id, units: [] });
+  for (const { squad_id, ...unit } of rows) {
+    squads.get(squad_id).units.push(unit);
+  }
+  return squads;
+}
+
+async function getSquad(squadId) {
+  return (await getSquads([squadId])).get(squadId);
+}
+
+module.exports = {
+  MAX_SQUAD_SIZE,
+  parseUnitIds,
+  findSquad,
+  findOrCreateSquad,
+  deleteOrphanSquads,
+  getSquads,
+  getSquad,
+};

@@ -4,6 +4,12 @@ node_modules/
 uploads/
 .DS_Store
 
+# Web UI build output (built inside the Docker image)
+frontend/dist/
+
+# Local dev database (backend `npm run dev:db` with PGLITE_DIR)
+.devdb/
+
 # Android
 android/.gradle/
 android/local.properties

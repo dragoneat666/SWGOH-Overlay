@@ -87,6 +87,55 @@ ally code) and against squads you've already committed to this GAC round.
   must be approved before it's visible to the overlay. `counters.status` and
   `counters.source` columns exist for exactly this ('manual' entries can be
   auto-approved; 'ocr' or future crowd-submitted entries require review).
+- **One approved counter entry per defender team.** A second manual entry
+  for the same team is refused (409, with the existing entry's id) so the
+  overlay's answer is never ambiguous - add squads to the existing entry
+  instead. Each entry holds ranked counter squads, each with optional notes
+  ("kill Reva first"), stored on `counter_recommendations.notes`.
+
+## Squad identity & matching
+
+- A squad's identity is **its leader + its set of members**. Member order
+  past the leader doesn't matter, but the leader does - the lead ability
+  changes how a team plays, so "Vader lead" and "Sidious lead" with the same
+  five units are different defense teams. Squads are shared, immutable rows:
+  entering the same team again reuses the existing squad, and squads no
+  counter points at any more are deleted after edits.
+- Two lookups: `/api/counters/lookup` (exact team) and `/api/counters/match`
+  ("best match"). Opponents often run a known team with one or two members
+  swapped, so `match` scores every known defense team by member overlap plus
+  a leader bonus and returns the closest ones with their counters. This is
+  what the overlay should call once it can read the screen; it also works
+  with just a leader ("every team led by X").
+
+## Unit catalog
+
+- Unit names + `definition_id`s come from the game's own data via Comlink
+  (`POST /api/units/import-game-data`: `/metadata` for versions, `/data`
+  segment 3 for the `units` collection, `/localization` for English names).
+  Only obtainable, already-released units are kept, one per `baseId`. Safe to
+  re-run whenever new units come out; a unit added by hand with the same
+  name gets its `definition_id` attached instead of being duplicated.
+- Comlink roster entries name units `BASEID:SEVEN_STAR` - the part before the
+  colon is what matches `units.definition_id`.
+
+## Web admin UI
+
+- React + Vite, built into static files and **served by the api container**
+  (one image, same origin - no CORS, nothing extra to deploy). Mobile-first
+  and installable to the phone's home screen (web manifest + icons).
+- Signs in with the same shared `API_TOKEN` the phone app uses, kept in the
+  browser's localStorage. Good enough for you + one trusted friend; put
+  Authentik in front of the UI's path if that ever changes (the `/api` path
+  has to stay outside forward-auth, see below).
+
+## Schema changes
+
+- `db/init.sql` is the base schema. The api applies it itself when the
+  database has no tables (so a Dockge stack doesn't need the file copied
+  next to it), then runs the idempotent statements in
+  `backend/src/migrate.js` on every startup. New columns/indexes go there,
+  never as edits to an already-deployed `init.sql`.
 
 ## Auth & hosting
 
