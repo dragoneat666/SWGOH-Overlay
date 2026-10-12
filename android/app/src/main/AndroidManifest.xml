@@ -9,12 +9,17 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
+    <!-- Lets the "overlay running" notification (with its Stop button) show
+         on Android 13+ - optional, asked for on first Open Overlay -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- For talking to your self-hosted backend -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
         android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:theme="@style/Theme.SWGOHOverlay"
         android:usesCleartextTraffic="true">

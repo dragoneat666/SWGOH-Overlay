@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Same palette as the web admin UI (frontend/src/styles.css). -->
+<resources>
+    <color name="bg">#0D1117</color>
+    <color name="panel">#F2161B22</color>
+    <color name="surface">#161B22</color>
+    <color name="surface2">#1F2630</color>
+    <color name="border">#30363D</color>
+    <color name="text">#E6EDF3</color>
+    <color name="muted">#8B949E</color>
+    <color name="accent">#E3B341</color>
+    <color name="accent_text">#1A1300</color>
+    <color name="danger">#F85149</color>
+    <color name="link">#58A6FF</color>
+</resources>

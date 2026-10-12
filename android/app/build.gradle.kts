@@ -11,8 +11,8 @@ android {
         applicationId = "club.denflix.swgohoverlay"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     buildTypes {
@@ -39,5 +39,9 @@ dependencies {
 
     // Backend HTTP calls
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("org.json:json:20240303")
+
+    // Plain-JVM unit tests (src/test). org.json ships inside Android itself,
+    // but local tests run off-device and need the real library.
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

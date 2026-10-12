@@ -8,10 +8,17 @@
     <string name="api_base_url_label">Backend URL (e.g. http://100.x.x.x:4001 or https://swgoh.yourdomain.com)</string>
     <string name="api_token_label">API Token</string>
     <string name="reset_squads">Reset Used Squads</string>
-    <string name="move_bubble">Move Bubble</string>
-    <string name="done">Done</string>
+    <string name="move_bubble_hint">Tip: drag the floating bubble to move it anywhere on screen.</string>
     <string name="save">Save</string>
+    <string name="test_connection">Save &amp; test connection</string>
     <string name="overlay_permission_needed">SWGOH Overlay needs permission to draw over other apps. Tap OK, then enable it for SWGOH Overlay.</string>
-    <string name="scan">Scan</string>
-    <string name="home_used_squads_label">Squads used this round:</string>
+    <string name="bubble_description">SWGOH Overlay - tap to find counters</string>
+    <string name="panel_title">Find counters</string>
+    <string name="clear">Clear</string>
+    <string name="stop_overlay">Stop</string>
+    <string name="collapse">Close panel</string>
+    <string name="search_hint">Enemy unit or leader (e.g. SLKR)</string>
+    <string name="notification_title">SWGOH Overlay is running</string>
+    <string name="notification_text">Tap the bubble in-game to find counters.</string>
+    <string name="notification_channel">Overlay</string>
 </resources>

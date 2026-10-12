@@ -156,6 +156,11 @@ ally code) and against squads you've already committed to this GAC round.
 - This is **client-side, local app state** — not stored server-side. It's a
   transient "what have I already committed to this round" list, not a fact
   about the world worth persisting centrally.
+- It tracks **units**, not just whole squads: in GAC each character can only
+  attack once per round, so after "Use" on a counter squad, any other counter
+  containing even one of those units is shown as unavailable ("Already
+  used: X"). Counters needing units your roster doesn't have are dimmed the
+  same way (android/.../CounterRanking.kt).
 - Reset behavior: on app open, if more than 24h since last open, prompt
   "reset squad tracking?" rather than deciding silently. Also exposed as a
   manual "Reset Squads" button in Settings for any time you want to clear it

@@ -1,10 +1,13 @@
 package club.denflix.swgohoverlay
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
 
@@ -55,18 +58,35 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            startOverlayService()
-            // Try to bring SWGoH to the foreground too. If it's not
-            // installed, this silently no-ops and the user just switches
-            // to it themselves - see README for why this isn't hard-required.
-            packageManager.getLaunchIntentForPackage("com.ea.game.starwarscapital_row")
-                ?.let { startActivity(it) }
-            moveTaskToBack(true)
+            // Android 13+ hides the "overlay running" notification (and its
+            // Stop button) unless notifications are allowed. Asking is
+            // optional - the overlay starts whatever the answer, and once
+            // someone has said no Android stops showing the prompt.
+            if (Build.VERSION.SDK_INT >= 33 &&
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+            ) {
+                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                return@setOnClickListener
+            }
+            launchOverlay()
         }
 
         findViewById<android.widget.Button>(R.id.btnSettings).setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
+    }
+
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { launchOverlay() }
+
+    private fun launchOverlay() {
+        startOverlayService()
+        // Try to bring SWGoH to the foreground too. If it's not
+        // installed, this silently no-ops and the user just switches
+        // to it themselves - see README for why this isn't hard-required.
+        packageManager.getLaunchIntentForPackage("com.ea.game.starwarscapital_row")
+            ?.let { startActivity(it) }
+        moveTaskToBack(true)
     }
 
     private fun startOverlayService() {

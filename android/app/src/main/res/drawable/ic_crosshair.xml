@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Same mark as the web UI icon (frontend/public/icon.svg), 24dp grid. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="512" android:viewportHeight="512">
+    <path android:strokeColor="#E3B341" android:strokeWidth="32"
+        android:pathData="M256,96a160,160 0,1 1,0 320a160,160 0,1 1,0 -320z" />
+    <path android:strokeColor="#E3B341" android:strokeWidth="32" android:strokeLineCap="round"
+        android:pathData="M256,72V196M256,316V440M72,256H196M316,256H440" />
+    <path android:fillColor="#58A6FF"
+        android:pathData="M256,218a38,38 0,1 1,0 76a38,38 0,1 1,0 -76z" />
+</vector>

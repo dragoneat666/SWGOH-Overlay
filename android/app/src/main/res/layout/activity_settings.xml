@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:fitsSystemWindows="true">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -17,7 +18,9 @@
             android:id="@+id/inputAllyCode"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:inputType="number"
+            android:inputType="phone"
+            android:hint="123-456-789"
+            android:importantForAutofill="no"
             android:layout_marginBottom="16dp" />
 
         <TextView
@@ -29,6 +32,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:inputType="textUri"
+            android:hint="http://100.x.x.x:4001"
+            android:importantForAutofill="no"
             android:layout_marginBottom="16dp" />
 
         <TextView
@@ -40,27 +45,34 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:inputType="textPassword"
+            android:importantForAutofill="no"
             android:layout_marginBottom="24dp" />
 
         <Button
             android:id="@+id/btnSave"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/save"
-            android:layout_marginBottom="32dp" />
+            android:text="@string/test_connection" />
 
-        <Button
-            android:id="@+id/btnMoveBubble"
+        <TextView
+            android:id="@+id/connectionStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/move_bubble"
-            android:layout_marginBottom="16dp" />
+            android:layout_marginTop="12dp"
+            android:layout_marginBottom="32dp"
+            android:textIsSelectable="true" />
 
         <Button
             android:id="@+id/btnResetSquads"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/reset_squads" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/move_bubble_hint" />
 
     </LinearLayout>
 </ScrollView>

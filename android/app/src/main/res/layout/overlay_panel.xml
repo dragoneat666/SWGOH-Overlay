@@ -1,90 +1,115 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The expanded panel. It has three "screens" stacked as ViewFlipper-style
-     visibility-toggled containers (home / team select / counter results) -
-     see OverlayService.kt for how these are shown/hidden. Kept as plain
-     FrameLayout children rather than a real ViewFlipper/Fragment setup for
-     now, to keep this first pass simple; revisit if it gets unwieldy. -->
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="300dp"
-    android:layout_height="wrap_content"
-    android:background="#DD1B1B2E"
-    android:padding="12dp">
+<!-- The expanded panel. One screen whose content area changes with what
+     you've done (OverlayService.render):
+       - typing in the search box -> matching units to tap
+       - enemy units picked       -> closest known team + its counters
+       - nothing picked yet       -> used squads this round + known teams -->
+<club.denflix.swgohoverlay.PanelRootLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
 
-    <!-- HOME -->
     <LinearLayout
-        android:id="@+id/screenHome"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="match_parent"
+        android:background="@drawable/panel_bg"
         android:orientation="vertical"
-        android:visibility="visible">
+        android:padding="12dp">
 
-        <Button
-            android:id="@+id/btnScan"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/scan" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textColor="#FFFFFF"
-            android:layout_marginTop="12dp"
-            android:text="@string/home_used_squads_label" />
-
-        <TextView
-            android:id="@+id/usedSquadsList"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textColor="#CCCCCC"
-            android:text="" />
-    </LinearLayout>
-
-    <!-- TEAM SELECT: which of the 2-3 defending teams are you facing? -->
-    <LinearLayout
-        android:id="@+id/screenTeamSelect"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:visibility="gone">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textColor="#FFFFFF"
-            android:text="Which team are you facing?" />
-
-        <!-- Populated at runtime with one button per detected/available team.
-             TODO: this is where automatic team detection from a screenshot
-             plugs in later - see IconMatcher.kt. For now this list is filled
-             from a manual picker. -->
         <LinearLayout
-            android:id="@+id/teamSelectButtons"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical" />
-    </LinearLayout>
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
-    <!-- COUNTER RESULTS: top 3 recommended squads -->
-    <LinearLayout
-        android:id="@+id/screenCounterResults"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:visibility="gone">
+            <TextView
+                android:id="@+id/panelTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="@string/panel_title"
+                android:textColor="@color/accent"
+                android:textSize="16sp"
+                android:textStyle="bold" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textColor="#FFFFFF"
-            android:text="Recommended counters" />
+            <TextView
+                android:id="@+id/btnClear"
+                android:layout_width="wrap_content"
+                android:layout_height="34dp"
+                android:layout_marginEnd="6dp"
+                android:background="@drawable/button_ghost_bg"
+                android:gravity="center"
+                android:paddingHorizontal="12dp"
+                android:text="@string/clear"
+                android:textColor="@color/text"
+                android:textSize="13sp" />
 
-        <!-- Populated at runtime, one row per recommended squad, each row
-             tappable to mark it "used" - see OverlayService.kt -->
-        <LinearLayout
-            android:id="@+id/counterResultsList"
+            <TextView
+                android:id="@+id/btnStop"
+                android:layout_width="wrap_content"
+                android:layout_height="34dp"
+                android:layout_marginEnd="6dp"
+                android:background="@drawable/button_ghost_bg"
+                android:gravity="center"
+                android:paddingHorizontal="12dp"
+                android:text="@string/stop_overlay"
+                android:textColor="@color/muted"
+                android:textSize="13sp" />
+
+            <ImageView
+                android:id="@+id/btnCollapse"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:background="@drawable/row_bg"
+                android:contentDescription="@string/collapse"
+                android:padding="6dp"
+                android:src="@drawable/ic_close" />
+        </LinearLayout>
+
+        <EditText
+            android:id="@+id/searchInput"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/input_bg"
+            android:hint="@string/search_hint"
+            android:imeOptions="actionDone|flagNoExtractUi|flagNoFullscreen"
+            android:importantForAutofill="no"
+            android:inputType="text|textNoSuggestions"
+            android:paddingHorizontal="12dp"
+            android:singleLine="true"
+            android:textColor="@color/text"
+            android:textColorHint="@color/muted"
+            android:textSize="16sp" />
+
+        <!-- Picked enemy units. Wraps onto more lines (ChipGroup is a flow
+             layout) so every pick stays visible - a sideways-scrolling row
+             hid the third pick off the edge. -->
+        <com.google.android.material.chip.ChipGroup
+            xmlns:app="http://schemas.android.com/apk/res-auto"
+            android:id="@+id/selectedChips"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical" />
-    </LinearLayout>
+            android:layout_marginTop="8dp"
+            android:visibility="gone"
+            app:chipSpacingHorizontal="6dp"
+            app:chipSpacingVertical="6dp" />
 
-</FrameLayout>
+        <ScrollView
+            android:id="@+id/contentScroll"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="8dp"
+            android:layout_weight="1"
+            android:fadeScrollbars="false"
+            android:scrollbarSize="3dp">
+
+            <LinearLayout
+                android:id="@+id/contentList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </ScrollView>
+    </LinearLayout>
+</club.denflix.swgohoverlay.PanelRootLayout>

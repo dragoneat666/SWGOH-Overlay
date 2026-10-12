@@ -32,13 +32,14 @@ What's real and working:
   counter editor (defense team + ranked counter squads with notes), units
   library (import from game, add/edit/delete, portraits), review queue
 - docker-compose stack: Postgres + api (+ web UI) + Comlink
-- Android app skeleton: launcher screen (Open Overlay / Settings), Settings
-  screen (ally code, API URL, bubble position placeholder, Reset Squads), and
-  the OverlayService with a working floating bubble + expandable panel shell
+- Android overlay app, manual mode: floating bubble, type the enemy team
+  (names or initials), best-match counters from the server filtered by your
+  roster and by units already used this round
 
 What's **stubbed / not yet built**:
 
-- The Android app hasn't been built or run against the real backend yet
+- The Android app has only been tested on an emulator (Android 16) against a
+  local backend, not yet on a real phone with the game running
 - The icon-matching engine itself (perceptual-hash comparison of cropped
   portraits against the units library) — `IconMatcher.kt` has the interface
   and a TODO where the real comparison goes
@@ -117,12 +118,35 @@ cd frontend && npm test    # unit search logic
 
 CI runs both before publishing the image.
 
-## Quick start (Android)
+## Android app
 
-Open `android/` in Android Studio. It's a plain-Kotlin, XML-layout project
-(no Compose, no unusual Gradle plugins) to keep the initial build friction
-low. Set the backend's URL and your ally code from the Settings screen once
-it's installed on your phone.
+Plain Kotlin + XML layouts (no Compose). Build with JDK 17 and the Android
+SDK:
+
+```bash
+cd android
+./gradlew testDebugUnitTest assembleDebug   # APK: app/build/outputs/apk/debug/app-debug.apk
+```
+
+First run on the phone: **Settings** → enter your ally code, the server URL
+(`http://<netbird-ip>:4001` or your domain) and the API token → **Save & test
+connection** (checks the server, the token, the units library and your
+roster). Then **Open Overlay** and allow "Display over other apps".
+
+In game (manual mode):
+
+1. Tap the bubble (drag it anywhere - it remembers where).
+2. Type an enemy unit - name or initials (`SLKR`, `JMK`) - and press ✓.
+   The title bar shows which unit ✓ will add, since in landscape the
+   keyboard covers the list. Keep typing more members; close the keyboard to
+   see counters.
+3. The closest saved defense team is shown with its counters, best first.
+   Counters needing a unit you don't own, or a unit you already attacked
+   with this round, are dimmed with the reason.
+4. **Use** marks that squad used for the round (every unit in it). The panel's
+   home view lists used squads, with **Reset round**.
+
+Picks reset automatically if the panel has been closed for 90+ seconds.
 
 ## Repo layout
 

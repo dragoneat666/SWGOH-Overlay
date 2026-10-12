@@ -1,62 +1,76 @@
 package club.denflix.swgohoverlay
 
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
  * Thin client for the backend in backend/. All calls are synchronous -
- * callers are expected to run this off the main thread (a background
- * thread/coroutine), which isn't wired up yet in this first pass. See
- * OverlayService.kt TODOs for where this gets called from.
+ * callers must run them off the main thread (OverlayService.runAsync,
+ * SettingsActivity's background thread).
  */
 class ApiClient(private val prefs: Prefs) {
 
+    /** Error with a message that's fine to show the user as-is. */
+    class ApiException(message: String) : Exception(message)
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
+        // Roster pulls go out to the game's servers via Comlink - give them time.
+        .readTimeout(45, TimeUnit.SECONDS)
         .build()
 
-    private val jsonMedia = "application/json".toMediaType()
-
-    private fun authedRequest(path: String): Request.Builder {
-        return Request.Builder()
-            .url("${prefs.apiBaseUrl}$path")
-            .addHeader("Authorization", "Bearer ${prefs.apiToken}")
-    }
-
-    /** GET /api/roster/:allyCode - your own roster + gear/relic/ultimate state */
-    fun fetchRoster(allyCode: String): JSONObject {
-        val req = authedRequest("/api/roster/$allyCode").get().build()
-        client.newCall(req).execute().use { resp ->
-            val body = resp.body?.string() ?: "{}"
-            if (!resp.isSuccessful) throw RuntimeException("roster fetch failed: ${resp.code} $body")
-            return JSONObject(body)
+    private fun get(path: String): String {
+        val base = prefs.apiBaseUrl
+        if (base.isBlank()) throw ApiException("Set the backend URL in Settings first.")
+        val request = try {
+            Request.Builder()
+                .url("$base$path")
+                .addHeader("Authorization", "Bearer ${prefs.apiToken}")
+                .get()
+                .build()
+        } catch (e: IllegalArgumentException) {
+            throw ApiException("Backend URL isn't valid - it should look like http://100.x.x.x:4001")
+        }
+        try {
+            client.newCall(request).execute().use { resp ->
+                val body = resp.body?.string() ?: ""
+                if (resp.code == 401) throw ApiException("The server rejected the API token.")
+                if (!resp.isSuccessful) {
+                    val msg = runCatching { JSONObject(body).optString("error") }.getOrNull()
+                    throw ApiException("Server error ${resp.code}${if (msg.isNullOrBlank()) "" else ": $msg"}")
+                }
+                return body
+            }
+        } catch (e: IOException) {
+            throw ApiException("Can't reach the server at $base (${e.message ?: e.javaClass.simpleName})")
         }
     }
 
-    /** GET /api/counters/lookup?defender_unit_ids=... */
-    fun lookupCounters(defenderUnitIds: List<Int>): JSONObject {
-        val ids = defenderUnitIds.joinToString(",")
-        val req = authedRequest("/api/counters/lookup?defender_unit_ids=$ids").get().build()
-        client.newCall(req).execute().use { resp ->
-            val body = resp.body?.string() ?: "{}"
-            if (!resp.isSuccessful) throw RuntimeException("counters lookup failed: ${resp.code} $body")
-            return JSONObject(body)
-        }
+    /** GET /api/auth/check - true if the URL + token work. */
+    fun checkAuth() {
+        get("/api/auth/check")
     }
 
-    /** GET /api/units - full units library, for name/id lookups client-side */
-    fun fetchUnits(): JSONObject {
-        val req = authedRequest("/api/units").get().build()
-        client.newCall(req).execute().use { resp ->
-            val body = resp.body?.string() ?: "[]"
-            if (!resp.isSuccessful) throw RuntimeException("units fetch failed: ${resp.code} $body")
-            // API returns a bare array; wrap it so callers have one shape to deal with.
-            return JSONObject().put("units", org.json.JSONArray(body))
-        }
+    /** GET /api/units - the whole units library (also cached in Prefs). */
+    fun fetchUnits(): Pair<List<GameUnit>, String> {
+        val body = get("/api/units")
+        return ApiJson.parseUnits(JSONArray(body)) to body
     }
+
+    /** GET /api/counters/defender-squads - every defense team with counters on file. */
+    fun fetchDefenderSquads(): List<Squad> =
+        ApiJson.parseDefenderSquads(JSONObject(get("/api/counters/defender-squads")))
+
+    /** GET /api/counters/match - known defense teams closest to the units
+     * seen on the enemy team (leader first), each with its counters. */
+    fun match(unitIds: List<Int>, limit: Int = 4): List<TeamMatch> =
+        ApiJson.parseMatches(JSONObject(get("/api/counters/match?unit_ids=${unitIds.joinToString(",")}&limit=$limit")))
+
+    /** GET /api/roster/:allyCode - game ids of every unit you own. */
+    fun fetchOwnedDefinitionIds(allyCode: String): Set<String> =
+        ApiJson.parseOwnedDefinitionIds(JSONObject(get("/api/roster/$allyCode")))
 }

@@ -1,15 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The collapsed, resting state - just a small round tappable/draggable icon -->
+<!-- The collapsed, resting state: a small round icon. Tap to open the panel,
+     drag to move it (see OverlayService.showBubble). -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="64dp"
-    android:layout_height="64dp">
+    android:layout_width="52dp"
+    android:layout_height="52dp">
 
     <ImageView
         android:id="@+id/bubbleIcon"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:padding="8dp"
-        android:background="@android:drawable/btn_default"
-        android:contentDescription="@string/app_name" />
+        android:padding="10dp"
+        android:background="@drawable/bubble_bg"
+        android:src="@drawable/ic_crosshair"
+        android:contentDescription="@string/bubble_description" />
 
 </FrameLayout>
