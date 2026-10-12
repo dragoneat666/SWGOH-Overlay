@@ -68,7 +68,8 @@ function rethrowUnique(err) {
 router.get("/", asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     `SELECT u.id, u.definition_id, u.name, u.image_path, u.is_ship,
-            EXISTS (SELECT 1 FROM squad_members sm WHERE sm.unit_id = u.id) AS used_in_counters
+            EXISTS (SELECT 1 FROM squad_members sm WHERE sm.unit_id = u.id) AS used_in_counters,
+            (SELECT COUNT(*)::int FROM unit_portraits p WHERE p.unit_id = u.id) AS face_count
      FROM units u
      ORDER BY u.name ASC`
   );

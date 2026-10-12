@@ -205,6 +205,42 @@ describe("faces", () => {
     );
   });
 
+  test("fix a wrong match: move a face to the right unit, or remove it", async () => {
+    // Two faces saved as Dooku - the first by mistake (it's really Sidious).
+    const wrong = (await api("POST", "/api/portraits", {
+      body: { unit_id: u["Dooku"], image: PNG_DATA_URL, fingerprint: fingerprint(20) },
+    })).body;
+    const right = (await api("POST", "/api/portraits", {
+      body: { unit_id: u["Dooku"], image: PNG_DATA_URL, fingerprint: fingerprint(21) },
+    })).body;
+    const unitPic = async (name) => (await api("GET", "/api/units")).body.find((x) => x.id === u[name]);
+    assert.equal((await unitPic("Dooku")).image_path, wrong.image_path, "first face became the picture");
+    assert.equal((await unitPic("Dooku")).face_count, 2);
+
+    const listed = (await api("GET", `/api/portraits?unit_id=${u["Dooku"]}`)).body;
+    assert.deepEqual(listed.map((f) => f.id), [wrong.id, right.id]);
+    assert.ok(!("fingerprint" in listed[0]), "list stays small");
+    assert.equal((await api("GET", "/api/portraits")).status, 400);
+
+    const moved = await api("PATCH", `/api/portraits/${wrong.id}`, { body: { unit_id: u["Sidious"] } });
+    assert.equal(moved.status, 200, JSON.stringify(moved.body));
+    assert.equal(moved.body.unit_id, u["Sidious"]);
+    assert.equal((await unitPic("Dooku")).image_path, right.image_path, "Dooku's picture switched to his real face");
+    assert.equal((await unitPic("Sidious")).image_path, wrong.image_path, "Sidious had none, gets this one");
+    const library = (await api("GET", "/api/portraits/library")).body;
+    assert.equal(library.find((f) => f.id === wrong.id).unit_id, u["Sidious"], "future matches use the fix");
+
+    // Removing Dooku's only face clears his picture and deletes the file.
+    assert.equal((await api("DELETE", `/api/portraits/${right.id}`)).status, 204);
+    assert.equal((await unitPic("Dooku")).image_path, null);
+    assert.equal((await unitPic("Dooku")).face_count, 0);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.ok(!existsSync(path.join(env.uploadDir, right.image_path)));
+
+    assert.equal((await api("PATCH", "/api/portraits/999999", { body: { unit_id: u["Dooku"] } })).status, 404);
+    assert.equal((await api("PATCH", `/api/portraits/${wrong.id}`, { body: { unit_id: 999999 } })).status, 400);
+  });
+
   test("queue: dedupes, identifies (with look-alikes), and dismisses", async () => {
     const queued = await api("POST", "/api/portraits/unidentified", {
       body: {

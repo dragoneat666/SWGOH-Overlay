@@ -986,3 +986,20 @@ input.invalid {
     margin: 0;
   }
 }
+
+/* ---------- Recognized faces (unit dialog) ---------- */
+
+.recognized-faces {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.recognized-faces h3 {
+  font-size: 1rem;
+}
+.recognized-faces .face-row {
+  align-items: center;
+}
+.recognized-faces .face-row + .face-row {
+  margin-top: 10px;
+}

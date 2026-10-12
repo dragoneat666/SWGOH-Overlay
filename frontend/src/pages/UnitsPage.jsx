@@ -6,6 +6,7 @@ import { matchRank } from "../unitSearch.js";
 import UnitAvatar from "../components/UnitAvatar.jsx";
 import Modal from "../components/Modal.jsx";
 import Icon from "../components/Icon.jsx";
+import UnitPicker from "../components/UnitPicker.jsx";
 
 const FILTERS = {
   all: { label: "All", test: () => true },
@@ -15,11 +16,14 @@ const FILTERS = {
 };
 
 export default function UnitsPage() {
-  const { units, loading, error, reload } = useUnits();
+  const { units, byId, loading, error, reload } = useUnits();
   const toast = useToast();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
-  const [editing, setEditing] = useState(null); // unit, or {} for a new one
+  // Unit id being edited, "new" for a new one. Looked up in the live list so
+  // the dialog sees changes (e.g. its picture) after a reload.
+  const [editing, setEditing] = useState(null);
+  const editingUnit = editing === "new" ? {} : editing != null ? byId.get(editing) : null;
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
 
@@ -53,7 +57,7 @@ export default function UnitsPage() {
             <Icon name="download" size={18} />
             {importing ? "Importing…" : "Import from game"}
           </button>
-          <button className="btn primary" onClick={() => setEditing({})}>
+          <button className="btn primary" onClick={() => setEditing("new")}>
             <Icon name="plus" size={18} /> Add unit
           </button>
         </div>
@@ -117,23 +121,35 @@ export default function UnitsPage() {
       <ul className="unit-list">
         {shown.map((unit) => (
           <li key={unit.id}>
-            <button className="unit-row" onClick={() => setEditing(unit)}>
+            <button className="unit-row" onClick={() => setEditing(unit.id)}>
               <UnitAvatar unit={unit} size={40} />
               <span className="grow">
                 <span className="unit-name">{unit.name}</span>
                 <span className="muted small mono">{unit.definition_id || "no game ID"}</span>
               </span>
               {unit.is_ship && <span className="tag">Ship</span>}
+              {unit.face_count > 0 && (
+                <span className="tag" title="Faces recognized as this unit">
+                  {unit.face_count} face{unit.face_count === 1 ? "" : "s"}
+                </span>
+              )}
               {unit.used_in_counters && <span className="tag accent">In counters</span>}
             </button>
           </li>
         ))}
       </ul>
 
-      {editing && (
+      {editingUnit && (
         <UnitDialog
-          unit={editing}
+          // Remount when the picture changes (e.g. a face was moved away) so
+          // the dialog shows the current one.
+          key={`${editingUnit.id ?? "new"}-${editingUnit.image_path ?? ""}`}
+          unit={editingUnit}
           onClose={() => setEditing(null)}
+          onFacesChanged={async (message) => {
+            await reload();
+            toast(message);
+          }}
           onSaved={async (message) => {
             setEditing(null);
             await reload();
@@ -145,7 +161,7 @@ export default function UnitsPage() {
   );
 }
 
-function UnitDialog({ unit, onClose, onSaved }) {
+function UnitDialog({ unit, onClose, onSaved, onFacesChanged }) {
   const isNew = !unit.id;
   const [name, setName] = useState(unit.name || "");
   const [definitionId, setDefinitionId] = useState(unit.definition_id || "");
@@ -273,6 +289,89 @@ function UnitDialog({ unit, onClose, onSaved }) {
           <p className="muted small">This unit is in at least one counter, so it can't be deleted.</p>
         )}
       </form>
+      {!isNew && <RecognizedFaces unit={unit} onChanged={onFacesChanged} />}
     </Modal>
+  );
+}
+
+// The faces the screenshot importer recognizes as this unit - where a wrong
+// "who is this?" answer gets fixed: move the face to the right unit, or
+// remove it so it's asked about again next import.
+function RecognizedFaces({ unit, onChanged }) {
+  const [faces, setFaces] = useState(null);
+  const [error, setError] = useState(null);
+  const [moving, setMoving] = useState(null); // face id with the unit picker open
+
+  const load = () =>
+    api(`/portraits?unit_id=${unit.id}`)
+      .then(setFaces)
+      .catch((err) => setError(err.message));
+
+  useEffect(() => {
+    load();
+  }, [unit.id]);
+
+  async function moveTo(face, target) {
+    if (target.id === unit.id) return setMoving(null);
+    try {
+      await api(`/portraits/${face.id}`, { method: "PATCH", body: { unit_id: target.id } });
+      setMoving(null);
+      await load();
+      onChanged(`Face moved to ${target.name}`);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function remove(face) {
+    if (!window.confirm(`Forget this face for ${unit.name}? It'll be asked about again next time it's imported.`)) return;
+    try {
+      await api(`/portraits/${face.id}`, { method: "DELETE" });
+      await load();
+      onChanged("Face removed");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <section className="recognized-faces">
+      <h3>Recognized faces</h3>
+      <p className="muted small">
+        Faces from screenshot imports that are matched to {unit.name}. If one is wrong, move it to the right unit
+        or remove it.
+      </p>
+      {error && <p className="error-text">{error}</p>}
+      {faces && faces.length === 0 && <p className="muted small">None yet.</p>}
+      <ul className="face-list">
+        {(faces || []).map((face) => (
+          <li key={face.id} className="face-row">
+            <span className="face big">
+              <img src={imageUrl(face.image_path)} alt={`Face recognized as ${unit.name}`} />
+            </span>
+            <div className="grow">
+              {moving === face.id ? (
+                <>
+                  <UnitPicker autoFocus placeholder="Move to which unit?" onPick={(target) => moveTo(face, target)} />
+                  <button type="button" className="btn small ghost" onClick={() => setMoving(null)}>
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <div className="row">
+                  <button type="button" className="btn small" onClick={() => setMoving(face.id)}>
+                    Wrong unit - move to…
+                  </button>
+                  <button type="button" className="btn small danger" onClick={() => remove(face)}>
+                    Remove
+                  </button>
+                </div>
+              )}
+              {face.image_path === unit.image_path && <span className="muted small">Used as this unit's picture</span>}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

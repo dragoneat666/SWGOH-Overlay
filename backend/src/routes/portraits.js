@@ -101,14 +101,75 @@ router.post("/", asyncHandler(async (req, res) => {
   }
 }));
 
+// If a unit's picture is `imagePath` (a face that's being moved away or
+// deleted), switch it to another of its faces - or clear it if it has none.
+async function replaceUnitPictureIfUsing(client, unitId, imagePath) {
+  await client.query(
+    `UPDATE units SET updated_at = now(), image_path = (
+       SELECT p.image_path FROM unit_portraits p
+       WHERE p.unit_id = units.id AND p.image_path <> $2
+       ORDER BY p.id LIMIT 1
+     )
+     WHERE id = $1 AND image_path = $2`,
+    [unitId, imagePath]
+  );
+}
+
+// GET /api/portraits?unit_id=12 - the faces recognized as one unit (to spot
+// and fix a wrong match).
+router.get("/", asyncHandler(async (req, res) => {
+  const unitId = Number(req.query.unit_id);
+  if (!Number.isInteger(unitId) || unitId <= 0) throw badRequest("unit_id query param is required");
+  const { rows } = await db.query(
+    `SELECT id, unit_id, image_path, source, created_at FROM unit_portraits
+     WHERE unit_id = $1 ORDER BY id`,
+    [unitId]
+  );
+  res.json(rows);
+}));
+
+// PATCH /api/portraits/:id { unit_id } - "this face was matched to the
+// wrong unit, it's actually that one". Pictures follow: the old unit stops
+// using it, the new unit gets it if it has no picture yet.
+router.patch("/:id(\\d+)", asyncHandler(async (req, res) => {
+  const id = parseId(req.params.id);
+  const unitId = Number((req.body || {}).unit_id);
+  if (!Number.isInteger(unitId) || !(await unitExists(db, unitId))) throw badRequest("unit_id doesn't exist");
+
+  const face = await db.withTransaction(async (client) => {
+    const { rows } = await client.query("SELECT * FROM unit_portraits WHERE id = $1 FOR UPDATE", [id]);
+    if (rows.length === 0) throw notFound();
+    const before = rows[0];
+    const { rows: updated } = await client.query(
+      "UPDATE unit_portraits SET unit_id = $1 WHERE id = $2 RETURNING id, unit_id, image_path, source, created_at",
+      [unitId, id]
+    );
+    if (before.unit_id !== unitId) {
+      await replaceUnitPictureIfUsing(client, before.unit_id, before.image_path);
+      await client.query(
+        "UPDATE units SET image_path = $1, updated_at = now() WHERE id = $2 AND image_path IS NULL",
+        [before.image_path, unitId]
+      );
+    }
+    return updated[0];
+  });
+  res.json(face);
+}));
+
+// DELETE /api/portraits/:id - forget a face (it'll be asked about again the
+// next time it shows up in a screenshot).
 router.delete("/:id(\\d+)", asyncHandler(async (req, res) => {
-  const { rows } = await db.query("DELETE FROM unit_portraits WHERE id = $1 RETURNING image_path", [
-    parseId(req.params.id),
-  ]);
-  if (rows.length === 0) throw notFound();
-  // Keep the file if a unit still uses it as its picture.
-  const { rows: users } = await db.query("SELECT 1 FROM units WHERE image_path = $1", [rows[0].image_path]);
-  if (users.length === 0) removeFile(rows[0].image_path);
+  const id = parseId(req.params.id);
+  const removed = await db.withTransaction(async (client) => {
+    const { rows } = await client.query("DELETE FROM unit_portraits WHERE id = $1 RETURNING unit_id, image_path", [id]);
+    if (rows.length === 0) throw notFound();
+    await replaceUnitPictureIfUsing(client, rows[0].unit_id, rows[0].image_path);
+    return rows[0];
+  });
+  // Keep the file if some unit still uses it as its picture (e.g. it was
+  // uploaded by hand as well).
+  const { rows: users } = await db.query("SELECT 1 FROM units WHERE image_path = $1", [removed.image_path]);
+  if (users.length === 0) removeFile(removed.image_path);
   res.status(204).end();
 }));
 
