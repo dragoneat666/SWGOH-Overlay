@@ -1,12 +1,10 @@
 // Browser side of the screenshot importer: image -> rows of faces + stats.
-// The pixel work lives in layout.js / faces.js / numbers.js (pure, tested
-// in Node); this file adds the canvas and OCR (tesseract.js) bits.
+// The pixel work lives in shared/scan (pure, tested in Node); this file
+// adds the canvas and OCR (tesseract.js) bits.
 import { createWorker, PSM } from "tesseract.js";
 import { detectRows } from "../../../shared/scan/layout.mjs";
-import { fingerprint } from "../../../shared/scan/faces.mjs";
+import { facePicture, pictureFingerprint, RING_SCALE } from "../../../shared/scan/faces.mjs";
 import { prepareNumberImage, NUMBER_CHARS, parseCount, parsePercent, parseBanners } from "../../../shared/scan/numbers.mjs";
-
-const FACE_IMAGE_SIZE = 72;
 
 // The OCR engine is served from our own server (scripts/copy-ocr-assets.mjs)
 // and created once, on first use.
@@ -53,15 +51,16 @@ function imageDataToCanvas({ width, height, data }) {
   return canvas;
 }
 
-/** The whole portrait (ring included) as a small PNG for display/storage. */
-function faceImage(source, slot) {
-  const c = document.createElement("canvas");
-  c.width = FACE_IMAGE_SIZE;
-  c.height = FACE_IMAGE_SIZE;
-  const ctx = c.getContext("2d");
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(source, slot.cx - slot.r, slot.cy - slot.r, slot.r * 2, slot.r * 2, 0, 0, FACE_IMAGE_SIZE, FACE_IMAGE_SIZE);
-  return c.toDataURL("image/png");
+/** A face: its picture (whole portrait, ring included) as a PNG for
+ * display/storage, and the fingerprint of exactly that picture - the
+ * server recomputes stored fingerprints from the same pictures. */
+function face(img, s) {
+  const picture = facePicture(img, s.cx, s.cy, s.r, RING_SCALE.swgohgg);
+  return {
+    empty: false,
+    fingerprint: pictureFingerprint(picture, RING_SCALE.swgohgg),
+    image: imageDataToCanvas(picture).toDataURL("image/png"),
+  };
 }
 
 async function readNumber(worker, img, box, parse) {
@@ -86,8 +85,7 @@ export async function scanScreenshot(blob, onProgress = () => {}) {
   const detected = detectRows(img);
   if (detected.length === 0) return { rows: [] };
 
-  const toSlot = (s) =>
-    s.empty ? { empty: true } : { empty: false, fingerprint: fingerprint(img, s.cx, s.cy, s.r), image: faceImage(canvas, s) };
+  const toSlot = (s) => (s.empty ? { empty: true } : face(img, s));
 
   onProgress("Loading the text reader (first time can take a few seconds)…");
   const worker = await getWorker();

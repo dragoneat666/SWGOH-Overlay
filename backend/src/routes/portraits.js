@@ -6,16 +6,17 @@ const db = require("../db");
 const asyncHandler = require("../asyncHandler");
 const { uploadDir } = require("../config");
 const { badRequest, notFound } = require("../httpError");
+const { loadScanLib } = require("../faceFingerprints");
 
 // Face recognition data for the screenshot importer (and later the
-// overlay's screen reading). The browser does the image work - cropping
-// portraits and computing fingerprints (frontend/src/scan/faces.js) - and
-// this stores the results:
+// overlay's screen reading). The browser (or the scan endpoint) does the
+// image work - face pictures and their fingerprints (shared/scan/faces.mjs)
+// - and this stores the results:
 //   unit_portraits          faces we know the unit for
 //   unidentified_portraits  faces waiting for someone to say who they are
 const router = express.Router();
 
-// Same cut-off as frontend/src/scan/faces.js SAME_FACE.
+// Same cut-off as shared/scan/faces.mjs SAME_FACE.
 const SAME_FACE = 0.9;
 const MAX_IMAGE_BYTES = 300 * 1024;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -27,9 +28,14 @@ function similarity(a, b) {
   return dot;
 }
 
-function parseFingerprint(raw, label = "fingerprint") {
-  if (!Array.isArray(raw) || raw.length < 100 || raw.length > 4000 || !raw.every((v) => Number.isFinite(v))) {
+async function parseFingerprint(raw, label = "fingerprint") {
+  if (!Array.isArray(raw) || !raw.every((v) => Number.isFinite(v))) {
     throw badRequest(`${label} must be an array of numbers`);
+  }
+  const { faces } = await loadScanLib();
+  if (raw.length !== faces.LENGTH) {
+    // Made by an older version of the face code - it would never match.
+    throw badRequest(`${label} is from an older version of the app - reload the page and try again`);
   }
   return raw;
 }
@@ -87,7 +93,7 @@ router.get("/library", asyncHandler(async (req, res) => {
 router.post("/", asyncHandler(async (req, res) => {
   const body = req.body || {};
   const unitId = Number(body.unit_id);
-  const fingerprint = parseFingerprint(body.fingerprint);
+  const fingerprint = await parseFingerprint(body.fingerprint);
   if (!Number.isInteger(unitId) || !(await unitExists(db, unitId))) throw badRequest("unit_id doesn't exist");
   const imagePath = saveImage(body.image);
   try {
@@ -190,11 +196,14 @@ router.post("/unidentified", asyncHandler(async (req, res) => {
   if (!Array.isArray(items) || items.length === 0 || items.length > 100) {
     throw badRequest("items must be an array of 1-100 faces");
   }
-  const parsed = items.map((item, i) => ({
-    fingerprint: parseFingerprint(item && item.fingerprint, `items[${i}].fingerprint`),
-    image: item && item.image,
-    source: item && typeof item.source === "string" ? item.source.slice(0, 200) : null,
-  }));
+  const parsed = [];
+  for (const [i, item] of items.entries()) {
+    parsed.push({
+      fingerprint: await parseFingerprint(item && item.fingerprint, `items[${i}].fingerprint`),
+      image: item && item.image,
+      source: item && typeof item.source === "string" ? item.source.slice(0, 200) : null,
+    });
+  }
 
   const { rows: known } = await db.query(
     "SELECT fingerprint FROM unit_portraits UNION ALL SELECT fingerprint FROM unidentified_portraits"

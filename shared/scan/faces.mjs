@@ -2,8 +2,10 @@
 // faces so the same face is only asked about once.
 //
 // Fingerprint: the inside of the portrait circle (ring excluded - its color
-// shows gear/relic/alignment, not who the unit is), resampled to a 16x16
-// grid, circle-masked, as RGB values normalized to zero mean / unit length.
+// shows gear/relic/alignment, not who the unit is) down to just below the
+// center (the in-game level/relic/zeta/omicron badges cover the bottom),
+// resampled to a 16x16 grid, masked to that area, as RGB values normalized
+// to zero mean / unit length.
 // Two faces compare by dot product (cosine similarity, 1 = identical). The
 // normalization makes it tolerant of brightness/contrast differences
 // between sources; resampling relative to the circle size makes it
@@ -16,6 +18,18 @@ export const GRID = 16;
 // Fraction of the portrait radius kept: inside the colored ring and the
 // dark shadow just inside it.
 export const INNER = 0.7;
+// Lowest part kept, as a fraction of the radius below the center. In game
+// the gear/relic badge, zetas and omicrons sit over the bottom of the
+// portrait (from ~0.3 r down) and change as the unit is upgraded, so only
+// the part above that identifies the unit - one saved face per unit then
+// covers every relic level.
+export const CUT = 0.2;
+/** Size (px) of the stored face pictures - fingerprints are taken from them. */
+export const PICTURE_SIZE = 72;
+// How far around the portrait center the pictures reach, in radii: game
+// pictures (overlay scans) include the ring and a little glow, swgoh.gg
+// pictures (web importer) stop at the ring.
+export const RING_SCALE = { game: 1.3, swgohgg: 1 };
 /** Cosine similarity at or above which two faces are the same unit. */
 export const SAME_FACE = 0.9;
 
@@ -33,17 +47,25 @@ function sample(img, x, y, c) {
   return top * (1 - fy) + bottom * fy;
 }
 
-/** Grid cells that fall inside the circle (same for every fingerprint). */
+/** Grid cells that are used (same for every fingerprint): inside the
+ * circle and no lower than CUT. */
 const MASK = (() => {
   const cells = [];
   const c = (GRID - 1) / 2;
   for (let gy = 0; gy < GRID; gy++) {
+    // Cell center's distance below the portrait center, in radii.
+    const below = ((gy + 0.5) * 2 / GRID - 1) * INNER;
+    if (below > CUT) continue;
     for (let gx = 0; gx < GRID; gx++) {
       if ((gx - c) ** 2 + (gy - c) ** 2 <= (GRID / 2) ** 2) cells.push([gx, gy]);
     }
   }
   return cells;
 })();
+
+/** Numbers in a fingerprint. Stored fingerprints of another length were
+ * made by an older version and are recomputed from their pictures. */
+export const LENGTH = MASK.length * 3;
 
 /**
  * Fingerprint of the portrait centered at (cx, cy) with outer radius r.
@@ -74,6 +96,50 @@ export function fingerprint(img, cx, cy, r) {
   norm = Math.sqrt(norm) || 1;
   // Rounded so fingerprints stay compact when stored as JSON.
   return values.map((v) => Math.round((v / norm) * 10000) / 10000);
+}
+
+/**
+ * The portrait centered at (cx, cy), outer radius r, as a PICTURE_SIZE
+ * square covering ringScale * r around the center. Each picture pixel is
+ * the average of the screenshot pixels under it (a plain resize would skip
+ * pixels and make fingerprints jumpy).
+ */
+export function facePicture(img, cx, cy, r, ringScale) {
+  const size = PICTURE_SIZE;
+  const half = r * ringScale;
+  const step = (2 * half) / size;
+  const data = new Uint8ClampedArray(size * size * 4);
+  const clampX = (x) => Math.max(0, Math.min(img.width - 1, x));
+  const clampY = (y) => Math.max(0, Math.min(img.height - 1, y));
+  for (let y = 0; y < size; y++) {
+    const y0 = cy - half + y * step;
+    for (let x = 0; x < size; x++) {
+      const x0 = cx - half + x * step;
+      const sum = [0, 0, 0];
+      let n = 0;
+      for (let yy = Math.floor(y0); yy < y0 + step; yy++) {
+        for (let xx = Math.floor(x0); xx < x0 + step; xx++) {
+          const i = (clampY(yy) * img.width + clampX(xx)) * 4;
+          sum[0] += img.data[i];
+          sum[1] += img.data[i + 1];
+          sum[2] += img.data[i + 2];
+          n++;
+        }
+      }
+      const o = (y * size + x) * 4;
+      data[o] = Math.round(sum[0] / n);
+      data[o + 1] = Math.round(sum[1] / n);
+      data[o + 2] = Math.round(sum[2] / n);
+      data[o + 3] = 255;
+    }
+  }
+  return { width: size, height: size, data };
+}
+
+/** Fingerprint of a face picture (facePicture, or a stored one decoded). */
+export function pictureFingerprint(picture, ringScale) {
+  const c = picture.width / 2;
+  return fingerprint(picture, c, c, c / ringScale);
 }
 
 export function similarity(a, b) {

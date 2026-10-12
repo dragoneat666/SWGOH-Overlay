@@ -30,6 +30,28 @@ export function drawFace(img, cx, cy, radius, seed, dim = 1) {
   }
 }
 
+function fillDisk(img, cx, cy, radius, color) {
+  for (let y = Math.floor(cy - radius); y <= Math.ceil(cy + radius); y++) {
+    for (let x = Math.floor(cx - radius); x <= Math.ceil(cx + radius); x++) {
+      if (Math.hypot(x - cx, y - cy) <= radius) img.data.set([...color, 255], (y * img.width + x) * 4);
+    }
+  }
+}
+
+// In-game badges over the bottom of a portrait, like the real ones: the
+// gear/relic badge at the bottom, zetas lower left, omicrons lower right.
+// [x, y, radius] in portrait radii from its center, and a color.
+const BADGES = {
+  gear: [[0, 0.75, 0.28, [40, 90, 160]]],
+  relic: [[0, 0.75, 0.3, [200, 160, 40]], [-0.72, 0.6, 0.27, [120, 40, 170]]],
+  maxed: [[0, 0.75, 0.3, [190, 40, 40]], [-0.72, 0.6, 0.27, [120, 40, 170]], [0.72, 0.6, 0.27, [150, 150, 150]]],
+};
+
+/** Draws one of the BADGES sets ("gear", "relic", "maxed") on a portrait. */
+export function drawBadges(img, cx, cy, r, kind) {
+  for (const [x, y, radius, color] of BADGES[kind]) fillDisk(img, cx + x * r, cy + y * r, radius * r, color);
+}
+
 function drawRing(img, cx, cy, outer, inner, color) {
   for (let y = Math.floor(cy - outer); y <= Math.ceil(cy + outer); y++) {
     for (let x = Math.floor(cx - outer); x <= Math.ceil(cx + outer); x++) {
@@ -41,7 +63,8 @@ function drawRing(img, cx, cy, outer, inner, color) {
 
 /**
  * An in-game GAC territory screen at half phone resolution (1202x540):
- * one panel per entry of `squads` = [{ seeds: [5 face seeds], lit }].
+ * one panel per entry of `squads` = [{ seeds: [5 face seeds], lit, badges }]
+ * (badges: optional drawBadges kind for every portrait in the squad).
  * Geometry matches the real screen's proportions (panel 140 px tall,
  * portraits ~97.5 px apart).
  * Returns { img, faces: [[{ cx, cy }]] } with each squad's face centers.
@@ -61,6 +84,8 @@ export function gacScreen(squads) {
       const dim = squad.lit ? 1 : 0.45;
       drawRing(img, cx, cy, 33.5, 29, squad.lit ? [90, 170, 255] : [45, 85, 128]);
       drawFace(img, cx, cy, 28, seed, dim);
+      // Portrait radius as the detector measures it (shared/scan/gac.mjs).
+      if (squad.badges) drawBadges(img, cx, cy, pitch * (50 / 195), squad.badges);
       // Star row under the portrait: bright yellow when lit, dull when beaten.
       fillRect(img, Math.round(cx - 27), Math.round(top + h * 0.8), 55, 6, squad.lit ? [255, 210, 40] : [110, 100, 50]);
       centers.push({ cx, cy });

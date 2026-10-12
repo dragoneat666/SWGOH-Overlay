@@ -25,8 +25,8 @@ const MIGRATIONS = [
   `ALTER TABLE counter_recommendations ADD COLUMN IF NOT EXISTS stats_updated_at TIMESTAMPTZ`,
 
   // Known faces: one row per identified portrait crop. Several per unit is
-  // normal (different sources/ring colors). fingerprint = frontend
-  // src/scan/faces.js#fingerprint.
+  // normal (different sources/ring colors). fingerprint =
+  // shared/scan/faces.mjs#pictureFingerprint of the stored picture.
   `CREATE TABLE IF NOT EXISTS unit_portraits (
      id          SERIAL PRIMARY KEY,
      unit_id     INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,

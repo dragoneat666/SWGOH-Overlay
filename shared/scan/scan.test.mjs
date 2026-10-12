@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { detectRows } from "./layout.mjs";
-import { fingerprint, similarity, identify, groupFaces, SAME_FACE } from "./faces.mjs";
+import { facePicture, pictureFingerprint, similarity, identify, groupFaces, RING_SCALE, SAME_FACE } from "./faces.mjs";
 import { prepareNumberImage, parseCount, parsePercent, parseBanners } from "./numbers.mjs";
 
 const PAGE = [5, 14, 34];
@@ -89,7 +89,8 @@ test("same face matches across rows and sizes; different faces don't", () => {
   const rows = detectRows(img);
   const fp = (row, side, i) => {
     const s = rows[row][side][i];
-    return fingerprint(img, s.cx, s.cy, s.r);
+    // As the importer does it: fingerprint of the face's stored picture.
+    return pictureFingerprint(facePicture(img, s.cx, s.cy, s.r, RING_SCALE.swgohgg), RING_SCALE.swgohgg);
   };
   // Face 3 is a member in row 1 and a member in another slot in row 3.
   assert.ok(similarity(fp(0, "left", 2), fp(2, "left", 1)) >= SAME_FACE);

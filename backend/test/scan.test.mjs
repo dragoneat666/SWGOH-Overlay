@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { startTestEnv } from "./helpers.mjs";
 import { gacScreen } from "../../shared/scan/synthetic.mjs";
 import { detectGacSquads } from "../../shared/scan/gac.mjs";
-import { fingerprint } from "../../shared/scan/faces.mjs";
+import { facePicture, pictureFingerprint, RING_SCALE } from "../../shared/scan/faces.mjs";
 
 const require = createRequire(import.meta.url);
 const { PNG } = require("pngjs");
@@ -30,8 +30,14 @@ const toPng = (img) => {
   png.data = Buffer.from(img.data);
   return PNG.sync.write(png);
 };
-const PNG_1PX =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+// A face as the phone would save it: its picture and that picture's fingerprint.
+function savedFace(img, s) {
+  const picture = facePicture(img, s.cx, s.cy, s.r, RING_SCALE.game);
+  return {
+    image: "data:image/png;base64," + toPng(picture).toString("base64"),
+    fingerprint: pictureFingerprint(picture, RING_SCALE.game),
+  };
+}
 
 async function scan(body, contentType = "image/png") {
   const res = await fetch(`${env.baseUrl}/api/scan/gac`, {
@@ -56,7 +62,7 @@ test("scans a GAC screen: known faces, an unknown one, then a full match", async
   for (let i = 0; i < 4; i++) {
     const s = squad.slots[i];
     const res = await env.api("POST", "/api/portraits", {
-      body: { unit_id: u[names[i]], image: PNG_1PX, fingerprint: fingerprint(img, s.cx, s.cy, s.r), source: "gac screen" },
+      body: { unit_id: u[names[i]], ...savedFace(img, s), source: "gac screen" },
     });
     assert.equal(res.status, 201);
   }
@@ -100,6 +106,13 @@ test("scans a GAC screen: known faces, an unknown one, then a full match", async
   const third = await scan(jpg, "image/jpeg");
   assert.equal(third.status, 200);
   assert.deepEqual(third.body.squads[0].slots.map((s) => s.unit_id), defense, "JPEG compression doesn't break matching");
+
+  // Same squad after the opponent upgraded everyone (relics, zetas,
+  // omicrons): still recognized from the faces saved before.
+  const upgraded = gacScreen([{ seeds, lit: true, badges: "maxed" }]).img;
+  const fourth = await scan(toPng(upgraded));
+  assert.deepEqual(fourth.body.squads[0].slots.map((s) => s.unit_id), defense, "badges don't matter");
+  assert.equal(fourth.body.squads[0].matches[0].exact, true);
 });
 
 test("rejects things that aren't a screenshot", async () => {

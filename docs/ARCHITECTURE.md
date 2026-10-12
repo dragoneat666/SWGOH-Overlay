@@ -105,7 +105,14 @@ ally code) and against squads you've already committed to this GAC round.
   are read with tesseract.js, served from our own server (no CDN). You
   review every row before saving.
 - Faces are recognized by fingerprint (16x16 masked, normalized color grid
-  of the area inside the ring, cosine similarity >= 0.9). Copies of the same
+  of the area inside the ring, down to 0.2 radii below the center; cosine
+  similarity >= 0.9). Everything below that is left out because in game the
+  gear/relic badge, zetas and omicrons cover it - so one saved face covers a
+  unit at every relic level. Fingerprints are always taken from the face's
+  stored 72px picture (made by averaging pixels), so a face saved from its
+  picture and the same face in a later screenshot are measured the same way.
+  If the fingerprint math changes, the server recomputes stored fingerprints
+  from their pictures at startup (old ones have a different length). Copies of the same
   rendered portrait score ~1.0, different units stayed under 0.77 on real
   data. Unknown faces are asked once per distinct face; skipped ones go to
   the "To identify" queue (unidentified_portraits). Every identified face
@@ -131,8 +138,8 @@ ally code) and against squads you've already committed to this GAC round.
   from the distance between portraits (it doesn't change with ring color,
   relic badges or screen size). A squad is **lit** (still to beat) when its
   yellow stars show; darkened squads are counted as beaten and skipped.
-- The fingerprint only uses the inner 70% of the portrait, so gear/relic
-  rings and badges don't matter. Game portraits match swgoh.gg portraits
+- The fingerprint only uses the inner 70% of the portrait, above the
+  badges, so ring colors and gear/relic/zeta/omicron badges don't matter. Game portraits match swgoh.gg portraits
   less well (~0.4-0.7 for the right unit, still ranked first on real
   screenshots), so those become suggestions; once you confirm one, that
   game face is stored and matches ~1.0 from then on.

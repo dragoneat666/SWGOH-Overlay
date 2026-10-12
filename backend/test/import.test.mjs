@@ -1,12 +1,15 @@
 import { test, before, after, describe } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { startTestEnv } from "./helpers.mjs";
+import { LENGTH, pictureFingerprint, RING_SCALE } from "../../shared/scan/faces.mjs";
+import { blank, drawFace } from "../../shared/scan/synthetic.mjs";
 
 const require = createRequire(import.meta.url);
 const { counterScore, rankRecommendations } = require("../src/ranking");
+const { PNG } = require("pngjs");
 
 let env;
 let api;
@@ -33,7 +36,7 @@ const PNG_DATA_URL =
 function fingerprint(seed, noise = 0) {
   const v = [];
   let x = seed * 9301 + 49297;
-  for (let i = 0; i < 600; i++) {
+  for (let i = 0; i < LENGTH; i++) {
     x = (x * 9301 + 49297) % 233280;
     v.push(x / 233280 - 0.5 + (noise ? (Math.sin(i * 7.3) * noise) : 0));
   }
@@ -229,7 +232,7 @@ describe("faces", () => {
     const library = (await api("GET", "/api/portraits/library")).body;
     assert.equal(library.length, 1);
     assert.equal(library[0].unit_id, u["Maz Kanata"]);
-    assert.equal(library[0].fingerprint.length, 600);
+    assert.equal(library[0].fingerprint.length, LENGTH);
 
     const units = (await api("GET", "/api/units")).body;
     assert.equal(units.find((x) => x.id === u["Maz Kanata"]).image_path, res.body.image_path);
@@ -254,6 +257,12 @@ describe("faces", () => {
       (await api("POST", "/api/portraits", { body: { unit_id: u["Hunter"], image: PNG_DATA_URL, fingerprint: [1, 2] } })).status,
       400
     );
+    // A fingerprint made by an older version (stale browser tab) is refused.
+    const stale = await api("POST", "/api/portraits", {
+      body: { unit_id: u["Hunter"], image: PNG_DATA_URL, fingerprint: fingerprint(4).concat(fingerprint(5)) },
+    });
+    assert.equal(stale.status, 400);
+    assert.match(stale.body.error, /older version/);
   });
 
   test("fix a wrong match: move a face to the right unit, or remove it", async () => {
@@ -329,5 +338,51 @@ describe("faces", () => {
     assert.equal((await api("GET", "/api/portraits/unidentified")).body.length, 0);
     assert.equal((await api("DELETE", `/api/portraits/unidentified/${queue[0].id}`)).status, 404);
     assert.equal((await api("POST", "/api/portraits/unidentified/999/identify", { body: { unit_id: u["Hunter"] } })).status, 404);
+  });
+
+  test("startup recomputes fingerprints made by an older version from the pictures", async () => {
+    const { refreshFingerprints } = require("../src/faceFingerprints");
+    // Stored pictures: a scan picture (ring + glow) and an importer one.
+    const picture = (seed, ringScale) => {
+      const img = blank(72, 72, [10, 20, 40]);
+      drawFace(img, 36, 36, 35 / ringScale, seed);
+      const png = new PNG({ width: 72, height: 72 });
+      png.data = Buffer.from(img.data);
+      const name = `old-face-${seed}.png`;
+      writeFileSync(path.join(env.uploadDir, name), PNG.sync.write(png));
+      return { name, img };
+    };
+    const game = picture(31, RING_SCALE.game);
+    const gg = picture(32, RING_SCALE.swgohgg);
+    const old = JSON.stringify(fingerprint(30).concat(fingerprint(30)).slice(0, 600));
+    const ids = {};
+    ids.game = (await env.db.query(
+      "INSERT INTO unit_portraits (unit_id, image_path, fingerprint, source) VALUES ($1, $2, $3, 'gac screen') RETURNING id",
+      [u["Wrecker"], game.name, old]
+    )).rows[0].id;
+    ids.gg = (await env.db.query(
+      "INSERT INTO unidentified_portraits (image_path, fingerprint, source) VALUES ($1, $2, 'swgoh.gg screenshot') RETURNING id",
+      [gg.name, old]
+    )).rows[0].id;
+    ids.missing = (await env.db.query(
+      "INSERT INTO unit_portraits (unit_id, image_path, fingerprint, source) VALUES ($1, 'gone.png', $2, 'gac screen') RETURNING id",
+      [u["Wrecker"], old]
+    )).rows[0].id;
+
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      assert.deepEqual(await refreshFingerprints(), { updated: 2, failed: 1 });
+      // Current ones are left alone; the unreadable one is retried next time.
+      assert.deepEqual(await refreshFingerprints(), { updated: 0, failed: 1 });
+    } finally {
+      console.warn = warn;
+    }
+
+    const stored = async (table, id) =>
+      (await env.db.query(`SELECT fingerprint FROM ${table} WHERE id = $1`, [id])).rows[0].fingerprint;
+    assert.deepEqual(await stored("unit_portraits", ids.game), pictureFingerprint(game.img, RING_SCALE.game));
+    assert.deepEqual(await stored("unidentified_portraits", ids.gg), pictureFingerprint(gg.img, RING_SCALE.swgohgg));
+    await env.db.query("DELETE FROM unit_portraits WHERE id = $1", [ids.missing]);
   });
 });

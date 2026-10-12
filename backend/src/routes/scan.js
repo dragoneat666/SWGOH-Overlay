@@ -1,13 +1,11 @@
 const express = require("express");
-const fs = require("fs");
-const path = require("path");
-const { pathToFileURL } = require("url");
 const { PNG } = require("pngjs");
 const jpeg = require("jpeg-js");
 const db = require("../db");
 const asyncHandler = require("../asyncHandler");
 const { badRequest } = require("../httpError");
 const { matchDefense } = require("../counterQueries");
+const { loadScanLib } = require("../faceFingerprints");
 
 // Screen scans from the phone overlay: the phone sends a screenshot of the
 // GAC territory screen, this finds the enemy squads that are still
@@ -16,22 +14,6 @@ const { matchDefense } = require("../counterQueries");
 // (shared/scan, ES modules).
 const router = express.Router();
 
-// /app/shared in the Docker image, <repo>/shared in a checkout.
-const SHARED_DIRS = [
-  path.join(__dirname, "..", "..", "shared", "scan"),
-  path.join(__dirname, "..", "..", "..", "shared", "scan"),
-];
-let scanLib = null;
-async function loadScanLib() {
-  if (!scanLib) {
-    const dir = SHARED_DIRS.find((d) => fs.existsSync(path.join(d, "gac.mjs")));
-    if (!dir) throw new Error("shared/scan not found");
-    const load = (f) => import(pathToFileURL(path.join(dir, f)).href);
-    scanLib = { gac: await load("gac.mjs"), faces: await load("faces.mjs") };
-  }
-  return scanLib;
-}
-
 // At or above this a face counts as recognized without asking. Same-source
 // copies of a face score ~1.0; a game face vs its swgoh.gg version scores
 // around 0.4-0.7, so those come back as suggestions to confirm.
@@ -39,8 +21,6 @@ const SAME_FACE = 0.9;
 // Suggestions shown when a face isn't recognized outright.
 const MAX_CANDIDATES = 3;
 const MIN_CANDIDATE_SCORE = 0.25;
-
-const FACE_IMAGE_SIZE = 72;
 
 function decodeImage(body, contentType) {
   if (!Buffer.isBuffer(body) || body.length === 0) {
@@ -58,24 +38,12 @@ function decodeImage(body, contentType) {
   }
 }
 
-// The face (plus a little of the ring) as a small PNG data URL - shown on
-// the phone when asking who it is, and stored as the face's picture.
-function faceImage(img, { cx, cy, r }) {
-  const half = r * 1.3;
-  const out = new PNG({ width: FACE_IMAGE_SIZE, height: FACE_IMAGE_SIZE });
-  for (let y = 0; y < FACE_IMAGE_SIZE; y++) {
-    for (let x = 0; x < FACE_IMAGE_SIZE; x++) {
-      const sx = Math.min(img.width - 1, Math.max(0, Math.round(cx - half + ((x + 0.5) / FACE_IMAGE_SIZE) * 2 * half)));
-      const sy = Math.min(img.height - 1, Math.max(0, Math.round(cy - half + ((y + 0.5) / FACE_IMAGE_SIZE) * 2 * half)));
-      const si = (sy * img.width + sx) * 4;
-      const di = (y * FACE_IMAGE_SIZE + x) * 4;
-      out.data[di] = img.data[si];
-      out.data[di + 1] = img.data[si + 1];
-      out.data[di + 2] = img.data[si + 2];
-      out.data[di + 3] = 255;
-    }
-  }
-  return "data:image/png;base64," + PNG.sync.write(out).toString("base64");
+// A face picture (faces.facePicture) as a PNG data URL - shown on the phone
+// when asking who it is, and stored as the face's picture.
+function pictureDataUrl(picture) {
+  const png = new PNG({ width: picture.width, height: picture.height });
+  png.data = Buffer.from(picture.data);
+  return "data:image/png;base64," + PNG.sync.write(png).toString("base64");
 }
 
 // Best score per unit, highest first.
@@ -114,7 +82,10 @@ router.post(
     const squads = [];
     for (const squad of lit) {
       const slots = squad.slots.map((slot) => {
-        const fingerprint = faces.fingerprint(img, slot.cx, slot.cy, slot.r);
+        // Fingerprint from the picture, exactly as it will be stored if the
+        // user says who this is - so it's recognized next time.
+        const picture = faces.facePicture(img, slot.cx, slot.cy, slot.r, faces.RING_SCALE.game);
+        const fingerprint = faces.pictureFingerprint(picture, faces.RING_SCALE.game);
         const ranked = rankUnits(fingerprint, library, faces.similarity);
         const top = ranked[0];
         const recognized = top && top.score >= SAME_FACE;
@@ -125,7 +96,7 @@ router.post(
             .filter((c) => c.score >= MIN_CANDIDATE_SCORE)
             .slice(0, MAX_CANDIDATES)
             .map((c) => ({ unit_id: c.unitId, name: names.get(c.unitId) || null, score: Math.round(c.score * 1000) / 1000 })),
-          image: faceImage(img, slot),
+          image: pictureDataUrl(picture),
           fingerprint,
         };
       });
