@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { counterMatches } from "../unitSearch.js";
 import SquadView from "../components/SquadView.jsx";
+import StatsLine from "../components/StatsLine.jsx";
 import Icon from "../components/Icon.jsx";
 
 const SORTS = {
@@ -123,6 +124,7 @@ export default function CountersPage() {
                     <span className="rank">#{squad.rank}</span>
                     <div className="grow">
                       <SquadView squad={squad} size={30} />
+                      <StatsLine squad={squad} />
                       {squad.notes && <p className="notes">{squad.notes}</p>}
                     </div>
                   </li>

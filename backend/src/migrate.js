@@ -16,6 +16,36 @@ const MIGRATIONS = [
   `ALTER TABLE counter_recommendations ADD COLUMN IF NOT EXISTS notes TEXT`,
   `CREATE INDEX IF NOT EXISTS idx_counter_recommendations_squad ON counter_recommendations(counter_squad_id)`,
   `CREATE INDEX IF NOT EXISTS idx_counters_defender ON counters(defender_squad_id)`,
+
+  // Battle stats per counter squad (from swgoh.gg screenshots or typed in).
+  // They decide the recommended order - see ranking.js.
+  `ALTER TABLE counter_recommendations ADD COLUMN IF NOT EXISTS seen_count INTEGER`,
+  `ALTER TABLE counter_recommendations ADD COLUMN IF NOT EXISTS win_rate DOUBLE PRECISION`,
+  `ALTER TABLE counter_recommendations ADD COLUMN IF NOT EXISTS avg_banners DOUBLE PRECISION`,
+  `ALTER TABLE counter_recommendations ADD COLUMN IF NOT EXISTS stats_updated_at TIMESTAMPTZ`,
+
+  // Known faces: one row per identified portrait crop. Several per unit is
+  // normal (different sources/ring colors). fingerprint = frontend
+  // src/scan/faces.js#fingerprint.
+  `CREATE TABLE IF NOT EXISTS unit_portraits (
+     id          SERIAL PRIMARY KEY,
+     unit_id     INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
+     image_path  TEXT NOT NULL,
+     fingerprint JSONB NOT NULL,
+     source      TEXT,
+     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_unit_portraits_unit ON unit_portraits(unit_id)`,
+
+  // Faces seen in a screenshot that nobody has identified yet - the
+  // "To identify" queue in the web UI.
+  `CREATE TABLE IF NOT EXISTS unidentified_portraits (
+     id          SERIAL PRIMARY KEY,
+     image_path  TEXT NOT NULL,
+     fingerprint JSONB NOT NULL,
+     source      TEXT,
+     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
 ];
 
 // /app/db/init.sql inside the Docker image, ../db/init.sql in a repo checkout.

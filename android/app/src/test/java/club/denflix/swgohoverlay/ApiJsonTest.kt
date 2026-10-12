@@ -15,7 +15,7 @@ class ApiJsonTest {
             {"id":1,"definition_id":"LORDVADER","name":"Lord Vader","image_path":null,"is_ship":false},
             {"id":2,"definition_id":"MAUL","name":"Maul","image_path":"x.png","is_ship":false}]},
           "counters":[{"counter_id":3,"notes":"Very fast","recommended_squads":[
-            {"rank":1,"notes":"JML gets it done","id":9,"units":[
+            {"rank":1,"manual_rank":2,"notes":"JML gets it done","seen_count":4096,"win_rate":98.5,"avg_banners":64.8,"score":62.1,"id":9,"units":[
               {"id":5,"definition_id":"GRANDMASTERLUKE","name":"Jedi Master Luke Skywalker","image_path":null,"is_ship":false}]},
             {"rank":2,"notes":null,"id":10,"units":[
               {"id":6,"definition_id":null,"name":"Hand-added","image_path":null,"is_ship":false}]}]}]}]}
@@ -34,6 +34,12 @@ class ApiJsonTest {
         assertEquals("GRANDMASTERLUKE", squads[0].squad.units[0].definitionId)
         assertNull(squads[1].notes)
         assertNull(squads[1].squad.units[0].definitionId)
+        // Battle stats (only on the first one).
+        assertEquals(98.5, squads[0].winRate!!, 0.0001)
+        assertEquals(4096, squads[0].seenCount)
+        assertEquals("98.5% win · 4.1k seen · 64.8 ⚑", squads[0].statsLabel)
+        assertNull(squads[1].winRate)
+        assertNull(squads[1].statsLabel)
     }
 
     @Test fun parsesUnitsAndRoster() {

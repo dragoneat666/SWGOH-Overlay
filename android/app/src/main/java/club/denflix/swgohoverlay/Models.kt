@@ -22,8 +22,34 @@ data class Squad(val id: Int, val units: List<GameUnit>) {
     val label: String get() = units.joinToString(", ") { it.name }
 }
 
-/** One recommended counter squad, rank 1 = best. */
-data class CounterSquad(val rank: Int, val notes: String?, val squad: Squad)
+/** One recommended counter squad, rank 1 = best (the server ranks them
+ * from their battle stats - backend/src/ranking.js). */
+data class CounterSquad(
+    val rank: Int,
+    val notes: String?,
+    val squad: Squad,
+    val winRate: Double? = null,
+    val seenCount: Int? = null,
+    val avgBanners: Double? = null,
+) {
+    /** "100% win · 153 seen · 64.8 ⚑", or null when there are no stats. */
+    val statsLabel: String?
+        get() {
+            val parts = mutableListOf<String>()
+            winRate?.let { parts += "${trimNumber(it)}% win" }
+            seenCount?.let { parts += "${formatCount(it)} seen" }
+            avgBanners?.let { parts += "${trimNumber(it)} ⚑" }
+            return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+        }
+
+    private fun trimNumber(v: Double) = if (v % 1.0 == 0.0) v.toLong().toString() else v.toString()
+
+    private fun formatCount(n: Int) = when {
+        n >= 10000 -> "${n / 1000}k"
+        n >= 1000 -> String.format(java.util.Locale.US, "%.1fk", n / 1000.0).replace(".0k", "k")
+        else -> n.toString()
+    }
+}
 
 /** A counter entry for one defense team (normally exactly one per team). */
 data class CounterEntry(val counterId: Int, val notes: String?, val squads: List<CounterSquad>)
@@ -42,6 +68,9 @@ object ApiJson {
 
     private fun JSONObject.optStringOrNull(key: String): String? =
         if (!has(key) || isNull(key)) null else getString(key).takeIf { it.isNotBlank() }
+
+    private fun JSONObject.optDoubleOrNull(key: String): Double? =
+        if (!has(key) || isNull(key)) null else getDouble(key)
 
     fun parseUnit(o: JSONObject) = GameUnit(
         id = o.getInt("id"),
@@ -62,7 +91,14 @@ object ApiJson {
         val recs = o.optJSONArray("recommended_squads") ?: JSONArray()
         val squads = (0 until recs.length()).map { i ->
             val r = recs.getJSONObject(i)
-            CounterSquad(rank = r.optInt("rank", i + 1), notes = r.optStringOrNull("notes"), squad = parseSquad(r))
+            CounterSquad(
+                rank = r.optInt("rank", i + 1),
+                notes = r.optStringOrNull("notes"),
+                squad = parseSquad(r),
+                winRate = r.optDoubleOrNull("win_rate"),
+                seenCount = if (r.has("seen_count") && !r.isNull("seen_count")) r.getInt("seen_count") else null,
+                avgBanners = r.optDoubleOrNull("avg_banners"),
+            )
         }
         return CounterEntry(o.getInt("counter_id"), o.optStringOrNull("notes"), squads)
     }

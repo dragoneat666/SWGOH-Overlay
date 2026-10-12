@@ -93,6 +93,31 @@ ally code) and against squads you've already committed to this GAC round.
   instead. Each entry holds ranked counter squads, each with optional notes
   ("kill Reva first"), stored on `counter_recommendations.notes`.
 
+## Screenshot import & stats (swgoh.gg counters pages)
+
+- Scraping swgoh.gg stays ruled out (robots.txt disallows
+  `/gac/counters/*?*`, the ToS bans automated access). Instead you take
+  screenshots of their counters list yourself and import them in the web
+  UI - the same data you'd otherwise type, read for you.
+- Everything happens in the browser (frontend/src/scan/): rows are found
+  from the gaps between swgoh.gg's row "bubbles", portraits are the square
+  full-height blobs, the three numbers sit between the two squads. Numbers
+  are read with tesseract.js, served from our own server (no CDN). You
+  review every row before saving.
+- Faces are recognized by fingerprint (16x16 masked, normalized color grid
+  of the area inside the ring, cosine similarity >= 0.9). Copies of the same
+  rendered portrait score ~1.0, different units stayed under 0.77 on real
+  data. Unknown faces are asked once per distinct face; skipped ones go to
+  the "To identify" queue (unidentified_portraits). Every identified face
+  becomes a reference (unit_portraits) and the unit's picture if it had
+  none - so the face library builds itself as you import, and it's what the
+  overlay's screen reading will match against later.
+- Stats live on counter_recommendations (seen_count, win_rate, avg_banners)
+  and decide the recommended order: expected banners = win rate (shrunk
+  toward 75% by 20 imaginary battles, so tiny samples can't top the list) x
+  average banners. API responses list counters best first with `rank` =
+  recommended position, so older app versions show the new order unchanged.
+
 ## Squad identity & matching
 
 - A squad's identity is **its leader + its set of members**. Member order

@@ -7,12 +7,14 @@ const requireAuth = require("./middleware/auth");
 const unitsRouter = require("./routes/units");
 const countersRouter = require("./routes/counters");
 const rosterRouter = require("./routes/roster");
+const portraitsRouter = require("./routes/portraits");
 
 // Builds the Express app without starting it, so tests can run it on a
 // random port against a throwaway database.
 function createApp() {
   const app = express();
-  app.use(express.json({ limit: "1mb" }));
+  // Large enough for a screenshot import's batch of small face images.
+  app.use(express.json({ limit: "8mb" }));
 
   // Unauthenticated health check, for docker-compose/uptime checks.
   app.get("/health", (req, res) => res.json({ ok: true }));
@@ -28,6 +30,7 @@ function createApp() {
   api.use("/units", unitsRouter);
   api.use("/counters", countersRouter);
   api.use("/roster", rosterRouter);
+  api.use("/portraits", portraitsRouter);
   api.use((req, res) => res.status(404).json({ error: "not found" }));
   app.use("/api", api);
 

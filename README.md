@@ -29,8 +29,11 @@ What's real and working:
   counter lookup, ally-code roster pull via a self-hosted SWGoH Comlink
   instance, image upload for unit portraits
 - Web admin UI: counters list/search (by name or initials, e.g. "SLKR"),
-  counter editor (defense team + ranked counter squads with notes), units
-  library (import from game, add/edit/delete, portraits), review queue
+  counter editor (defense team + counter squads with notes and stats),
+  screenshot import (face recognition + OCR), "To identify" faces queue,
+  units library (import from game, add/edit/delete, portraits)
+- Counters ranked automatically from battle stats (win rate, sample size,
+  average banners)
 - docker-compose stack: Postgres + api (+ web UI) + Comlink
 - Android overlay app, manual mode: floating bubble, type the enemy team
   (names or initials), best-match counters from the server filtered by your
@@ -45,7 +48,8 @@ What's **stubbed / not yet built**:
   and a TODO where the real comparison goes
 - Screen capture (MediaProjection) wiring to actually grab a screenshot from
   within the overlay service
-- The bulk "Import Units from Screenshot" registration tool (portraits)
+- Screen reading in the overlay (the face library it needs now builds up
+  from screenshot imports)
 
 ## Deploying (Dockge, published image)
 
@@ -67,7 +71,14 @@ Open `http://<server>:4001/` (or wherever your reverse proxy points at port
 
 First time: go to **Units → Import from game** to load every character and
 ship from the game's own data (takes a minute). Then add counters from the
-**Counters** tab.
+**Counters** tab, or:
+
+**Import** - paste (Ctrl+V) or drop a screenshot of a swgoh.gg GAC counters
+list (the rows between two ads). The app reads both squads and the Seen /
+Win % / Avg ⚑ numbers, asks "who is this?" once for each face it doesn't
+know yet (or parks them on the **Faces** list for later), and shows every
+row for checking before saving. Counters are then ranked automatically
+from their stats.
 
 **On your phone:** open the same address over Netbird or your domain, then in
 Chrome use **⋮ → Add to Home screen** — it opens full-screen like an app.

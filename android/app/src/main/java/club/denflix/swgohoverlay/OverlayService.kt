@@ -677,6 +677,7 @@ class OverlayService : Service() {
             if (i == 0) names.setSpan(StyleSpan(Typeface.BOLD), start, names.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
         body.addView(text(names, 15f, R.color.text))
+        r.counter.statsLabel?.let { body.addView(text(it, 13f, R.color.muted)) }
         r.counter.notes?.let { body.addView(text(it, 13f, R.color.muted, italic = true)) }
         when (r.availability) {
             CounterRanking.Availability.ALREADY_USED ->

@@ -16,6 +16,7 @@ const PATHS = {
   check: "M20 6 9 17l-5-5",
   back: "M15 18l-6-6 6-6",
   edit: "M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z",
+  scan: "M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M9 10h.01M15 10h.01M9.5 15a3.5 3.5 0 0 0 5 0",
 };
 
 export default function Icon({ name, size = 20, className = "" }) {

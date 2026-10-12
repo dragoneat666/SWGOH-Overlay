@@ -7,10 +7,21 @@ import SquadBuilder from "../components/SquadBuilder.jsx";
 import Icon from "../components/Icon.jsx";
 
 let keySeq = 0;
-function newSquad(unitIds = [], notes = "") {
+// Stats are kept as the strings typed into the inputs ("" = none).
+function newSquad(unitIds = [], notes = "", stats = {}) {
   keySeq += 1;
-  return { key: keySeq, unitIds, notes };
+  const str = (v) => (v == null ? "" : String(v));
+  return {
+    key: keySeq,
+    unitIds,
+    notes,
+    seen: str(stats.seen_count),
+    win: str(stats.win_rate),
+    banners: str(stats.avg_banners),
+  };
 }
+
+const hasStats = (s) => s.seen !== "" || s.win !== "" || s.banners !== "";
 
 export default function CounterEditor() {
   const { id } = useParams();
@@ -50,7 +61,7 @@ export default function CounterEditor() {
         setDefender(counter.defender.units.map((u) => u.id));
         setNotes(counter.notes || "");
         setSquads(
-          counter.recommended_squads.map((s) => newSquad(s.units.map((u) => u.id), s.notes || ""))
+          counter.recommended_squads.map((s) => newSquad(s.units.map((u) => u.id), s.notes || "", s))
         );
         setLoaded(true);
       })
@@ -99,16 +110,22 @@ export default function CounterEditor() {
 
   async function save(addAnother) {
     setError(null);
-    const kept = squads.filter((s) => s.unitIds.length > 0 || s.notes.trim());
+    const kept = squads.filter((s) => s.unitIds.length > 0 || s.notes.trim() || hasStats(s));
     if (defender.length === 0) return setError("Pick the defense team first.");
     if (kept.length === 0) return setError("Add at least one counter squad.");
     const emptyIndex = kept.findIndex((s) => s.unitIds.length === 0);
-    if (emptyIndex >= 0) return setError(`Counter #${emptyIndex + 1} has notes but no units.`);
+    if (emptyIndex >= 0) return setError(`Counter #${emptyIndex + 1} has notes or stats but no units.`);
 
     const body = {
       defender_unit_ids: defender,
       notes,
-      counter_squads: kept.map((s) => ({ unit_ids: s.unitIds, notes: s.notes })),
+      counter_squads: kept.map((s) => ({
+        unit_ids: s.unitIds,
+        notes: s.notes,
+        seen_count: s.seen,
+        win_rate: s.win,
+        avg_banners: s.banners,
+      })),
     };
 
     setSaving(true);
@@ -186,13 +203,17 @@ export default function CounterEditor() {
         </label>
       </section>
 
-      <h2 className="section-title">Counters, best first</h2>
+      <h2 className="section-title">Counters</h2>
+      <p className="muted small">
+        Ranked automatically from their stats (win rate, how often they've been seen, average banners). Squads
+        without stats come after those, in the order below.
+      </p>
 
       {squads.map((squad, i) => (
         <section className="card" key={squad.key}>
           <div className="squad-head">
             <span className="rank">#{i + 1}</span>
-            <span className="grow muted small">{i === 0 ? "Best option" : ""}</span>
+            <span className="grow" />
             <button
               type="button"
               className="icon-btn"
@@ -234,6 +255,45 @@ export default function CounterEditor() {
               onChange={(e) => updateSquad(squad.key, { notes: e.target.value })}
             />
           </label>
+          <div className="stats-inputs">
+            <label className="field">
+              <span className="field-label">Seen</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                min="0"
+                value={squad.seen}
+                placeholder="-"
+                onChange={(e) => updateSquad(squad.key, { seen: e.target.value })}
+              />
+            </label>
+            <label className="field">
+              <span className="field-label">Win %</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                max="100"
+                step="0.1"
+                value={squad.win}
+                placeholder="-"
+                onChange={(e) => updateSquad(squad.key, { win: e.target.value })}
+              />
+            </label>
+            <label className="field">
+              <span className="field-label">Avg ⚑</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                max="100"
+                step="0.01"
+                value={squad.banners}
+                placeholder="-"
+                onChange={(e) => updateSquad(squad.key, { banners: e.target.value })}
+              />
+            </label>
+          </div>
         </section>
       ))}
 

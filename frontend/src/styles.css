@@ -134,7 +134,7 @@ code {
   bottom: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(var(--nav-count, 4), 1fr);
   height: calc(var(--nav-h) + var(--safe-bottom));
   padding-bottom: var(--safe-bottom);
   background: var(--surface);
@@ -271,6 +271,7 @@ code {
 
 input[type="text"],
 input[type="search"],
+input[type="number"],
 input[type="password"] {
   width: 100%;
   min-height: 44px;
@@ -658,6 +659,169 @@ input::placeholder {
   object-fit: cover;
 }
 
+/* ---------- Battle stats ---------- */
+
+.stats-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 4px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.stats-line strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.stats-inputs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+.stats-inputs .field {
+  margin-top: 0;
+}
+
+/* ---------- Screenshot import ---------- */
+
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 36px 16px;
+  border-style: dashed;
+  text-align: center;
+  cursor: pointer;
+}
+.dropzone:hover {
+  border-color: var(--accent);
+}
+.scanning {
+  text-align: center;
+}
+.shot-preview {
+  max-width: 100%;
+  max-height: 220px;
+  border-radius: 8px;
+  opacity: 0.6;
+}
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.faces-panel {
+  border-color: rgba(227, 179, 65, 0.55);
+  margin-bottom: 14px;
+}
+.face-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+.face-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.face-list > .face-row + .face-row {
+  margin-top: 12px;
+}
+.face {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  width: 36px;
+  height: 36px;
+}
+.face img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+}
+.face.big {
+  width: 64px;
+  height: 64px;
+}
+.face.unknown img {
+  outline: 2px dashed var(--warn);
+  outline-offset: 1px;
+}
+.face-badge {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--warn);
+  color: #000;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-align: center;
+  line-height: 18px;
+}
+.slot-empty {
+  display: inline-block;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 2px dashed var(--border);
+}
+.unit-picker {
+  margin-top: 6px;
+}
+.unit-picker + .btn {
+  margin-top: 8px;
+}
+.import-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.import-rows > li + li {
+  margin-top: 10px;
+}
+.import-row {
+  display: grid;
+  gap: 10px;
+}
+.import-row.has-problem {
+  border-color: rgba(210, 153, 34, 0.5);
+}
+.row-check {
+  min-height: 0;
+}
+.import-squad {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.import-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.import-stats label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.import-stats .eyebrow {
+  margin: 0;
+}
+.import-stats input {
+  min-height: 38px;
+  padding: 6px 8px;
+}
+input.invalid {
+  border-color: var(--warn);
+}
+
 /* ---------- Modal ---------- */
 
 .modal {
@@ -812,5 +976,13 @@ input::placeholder {
   }
   li.card.counter-card > .row {
     grid-column: 1 / -1;
+  }
+  .import-row {
+    grid-template-columns: 90px minmax(0, 1fr) 260px minmax(0, 1fr);
+    align-items: center;
+  }
+  .import-row > .warning-text {
+    grid-column: 1 / -1;
+    margin: 0;
   }
 }

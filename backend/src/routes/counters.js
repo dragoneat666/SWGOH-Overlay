@@ -10,6 +10,8 @@ const {
   getSquads,
 } = require("../squadHelpers");
 
+const { rankRecommendations } = require("../ranking");
+
 const router = express.Router();
 
 const STATUSES = ["pending", "approved", "rejected"];
@@ -31,8 +33,28 @@ function parseUnitIdQuery(raw, label) {
   return parseUnitIds(String(raw).split(",").map((s) => s.trim()).filter(Boolean), label);
 }
 
+// Optional battle stats on a counter squad. Blank -> null; anything present
+// must be a sensible number.
+function parseStats(entry, label) {
+  const num = (key, min, max, integer) => {
+    const v = entry[key];
+    if (v === undefined || v === null || v === "") return null;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < min || n > max || (integer && !Number.isInteger(n))) {
+      throw badRequest(`${label}.${key} must be a number from ${min} to ${max}`);
+    }
+    return n;
+  };
+  return {
+    seenCount: num("seen_count", 0, 100000000, true),
+    winRate: num("win_rate", 0, 100, false),
+    avgBanners: num("avg_banners", 0, 100, false),
+  };
+}
+
 // counter_squads entries are either a bare unit-id array (leader first) or
-// { unit_ids: [...], notes: "..." }. Order = rank, best first.
+// { unit_ids: [...], notes, seen_count, win_rate, avg_banners }. Order =
+// the entered order; the recommended order comes from the stats (ranking.js).
 function parseCounterSquads(raw) {
   if (!Array.isArray(raw) || raw.length === 0) {
     throw badRequest("counter_squads must be a non-empty array of squads");
@@ -42,6 +64,7 @@ function parseCounterSquads(raw) {
     return {
       unitIds: parseUnitIds(isObject ? entry.unit_ids : entry, `counter_squads[${i}]`),
       notes: isObject ? cleanText(entry.notes) : null,
+      ...(isObject ? parseStats(entry, `counter_squads[${i}]`) : { seenCount: null, winRate: null, avgBanners: null }),
     };
   });
   const keys = squads.map(
@@ -68,7 +91,7 @@ async function loadCounters(whereSql, params) {
   if (counters.length === 0) return [];
 
   const { rows: recs } = await db.query(
-    `SELECT counter_id, counter_squad_id, rank, notes
+    `SELECT counter_id, counter_squad_id, rank, notes, seen_count, win_rate, avg_banners, stats_updated_at
      FROM counter_recommendations
      WHERE counter_id = ANY($1::int[])
      ORDER BY counter_id, rank ASC`,
@@ -85,14 +108,20 @@ async function loadCounters(whereSql, params) {
     recsByCounter.get(rec.counter_id).push({
       rank: rec.rank,
       notes: rec.notes,
+      seen_count: rec.seen_count,
+      win_rate: rec.win_rate,
+      avg_banners: rec.avg_banners,
+      stats_updated_at: rec.stats_updated_at,
       ...squads.get(rec.counter_squad_id),
     });
   }
 
+  // recommended_squads come back best first: `rank` is the recommended
+  // position (what the overlay shows), `manual_rank` the entered order.
   return counters.map(({ defender_squad_id, ...counter }) => ({
     ...counter,
     defender: squads.get(defender_squad_id),
-    recommended_squads: recsByCounter.get(counter.id) || [],
+    recommended_squads: rankRecommendations(recsByCounter.get(counter.id) || []),
   }));
 }
 
@@ -131,11 +160,14 @@ async function assertNoOtherApprovedCounter(client, defenderSquadId, exceptCount
 
 async function insertRecommendations(client, counterId, counterSquads) {
   for (let i = 0; i < counterSquads.length; i++) {
-    const squadId = await findOrCreateSquad(client, counterSquads[i].unitIds);
+    const s = counterSquads[i];
+    const squadId = await findOrCreateSquad(client, s.unitIds);
+    const hasStats = s.seenCount != null || s.winRate != null || s.avgBanners != null;
     await client.query(
-      `INSERT INTO counter_recommendations (counter_id, counter_squad_id, rank, notes)
-       VALUES ($1, $2, $3, $4)`,
-      [counterId, squadId, i + 1, counterSquads[i].notes]
+      `INSERT INTO counter_recommendations
+         (counter_id, counter_squad_id, rank, notes, seen_count, win_rate, avg_banners, stats_updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, ${hasStats ? "now()" : "NULL"})`,
+      [counterId, squadId, i + 1, s.notes, s.seenCount, s.winRate, s.avgBanners]
     );
   }
 }
@@ -194,6 +226,79 @@ router.post("/", asyncHandler(async (req, res) => {
   });
 
   res.status(201).json(await loadCounter(counterId));
+}));
+
+// POST /api/counters/import - battle records read from a screenshot (and
+// checked by you on the import screen).
+// body: { rows: [{ defender_unit_ids, counter_unit_ids, seen_count, win_rate, avg_banners }] }
+// Rows for the same defense team land in that team's one approved entry
+// (created if it doesn't exist yet). A counter squad that's already listed
+// gets its stats refreshed instead of being added twice.
+router.post("/import", asyncHandler(async (req, res) => {
+  const raw = (req.body || {}).rows;
+  if (!Array.isArray(raw) || raw.length === 0) throw badRequest("rows must be a non-empty array");
+  if (raw.length > 100) throw badRequest("at most 100 rows per import");
+  const rows = raw.map((r, i) => {
+    const row = r && typeof r === "object" ? r : {};
+    return {
+      defenderIds: parseUnitIds(row.defender_unit_ids, `rows[${i}].defender_unit_ids`),
+      counterIds: parseUnitIds(row.counter_unit_ids, `rows[${i}].counter_unit_ids`),
+      ...parseStats(row, `rows[${i}]`),
+    };
+  });
+
+  const summary = { defense_teams_created: 0, counters_added: 0, counters_updated: 0, counter_ids: [] };
+  await db.withTransaction(async (client) => {
+    const counterIdByDefender = new Map();
+    for (const row of rows) {
+      const defenderSquadId = await findOrCreateSquad(client, row.defenderIds);
+      let counterId = counterIdByDefender.get(defenderSquadId);
+      if (!counterId) {
+        const { rows: existing } = await client.query(
+          `SELECT id FROM counters WHERE defender_squad_id = $1 AND status = 'approved' ORDER BY id LIMIT 1`,
+          [defenderSquadId]
+        );
+        if (existing.length > 0) {
+          counterId = existing[0].id;
+        } else {
+          const { rows: created } = await client.query(
+            `INSERT INTO counters (defender_squad_id, status, source) VALUES ($1, 'approved', 'import') RETURNING id`,
+            [defenderSquadId]
+          );
+          counterId = created[0].id;
+          summary.defense_teams_created++;
+        }
+        counterIdByDefender.set(defenderSquadId, counterId);
+      }
+
+      const counterSquadId = await findOrCreateSquad(client, row.counterIds);
+      const { rows: rec } = await client.query(
+        "SELECT id FROM counter_recommendations WHERE counter_id = $1 AND counter_squad_id = $2",
+        [counterId, counterSquadId]
+      );
+      if (rec.length > 0) {
+        await client.query(
+          `UPDATE counter_recommendations
+           SET seen_count = $1, win_rate = $2, avg_banners = $3, stats_updated_at = now()
+           WHERE id = $4`,
+          [row.seenCount, row.winRate, row.avgBanners, rec[0].id]
+        );
+        summary.counters_updated++;
+      } else {
+        await client.query(
+          `INSERT INTO counter_recommendations
+             (counter_id, counter_squad_id, rank, seen_count, win_rate, avg_banners, stats_updated_at)
+           SELECT $1, $2, COALESCE(MAX(rank), 0) + 1, $3, $4, $5, now()
+           FROM counter_recommendations WHERE counter_id = $1`,
+          [counterId, counterSquadId, row.seenCount, row.winRate, row.avgBanners]
+        );
+        summary.counters_added++;
+      }
+    }
+    summary.counter_ids = [...new Set(counterIdByDefender.values())];
+  });
+
+  res.json(summary);
 }));
 
 // GET /api/counters/lookup?defender_unit_ids=12,4,87

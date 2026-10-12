@@ -1,21 +1,26 @@
 {
   "name": "swgoh-overlay-admin",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "node scripts/copy-ocr-assets.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/copy-ocr-assets.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "test": "node --test \"src/**/*.test.js\""
   },
   "dependencies": {
+    "@tesseract.js-data/eng": "^1.0.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "react-router-dom": "^7.18.4"
+    "react-router-dom": "^7.18.4",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^6.1.2",
+    "pngjs": "^7.0.0",
     "vite": "^8.3.4"
   }
 }

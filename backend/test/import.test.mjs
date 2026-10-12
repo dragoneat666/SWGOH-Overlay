@@ -1,0 +1,246 @@
+import { test, before, after, describe } from "node:test";
+import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { startTestEnv } from "./helpers.mjs";
+
+const require = createRequire(import.meta.url);
+const { counterScore, rankRecommendations } = require("../src/ranking");
+
+let env;
+let api;
+let u;
+
+before(async () => {
+  env = await startTestEnv();
+  api = env.api;
+  u = {};
+  for (const name of ["Darth Malgus", "Sith Trooper A", "Sith Trooper B", "Maz Kanata", "Hunter", "Dooku", "Sidious", "Wrecker"]) {
+    const res = await api("POST", "/api/units", { body: { name } });
+    u[name] = res.body.id;
+  }
+});
+
+after(async () => {
+  await env.stop();
+});
+
+// A 1x1 PNG as a data URL, and fake fingerprints: unit-length vectors
+// where "same face" means the same seed.
+const PNG_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+function fingerprint(seed, noise = 0) {
+  const v = [];
+  let x = seed * 9301 + 49297;
+  for (let i = 0; i < 600; i++) {
+    x = (x * 9301 + 49297) % 233280;
+    v.push(x / 233280 - 0.5 + (noise ? (Math.sin(i * 7.3) * noise) : 0));
+  }
+  const n = Math.sqrt(v.reduce((a, b) => a + b * b, 0));
+  return v.map((a) => a / n);
+}
+
+describe("ranking", () => {
+  test("expected banners, with small samples pulled toward 75%", () => {
+    assert.equal(counterScore({ win_rate: null, seen_count: 10, avg_banners: 60 }), null);
+    const lucky = counterScore({ win_rate: 100, seen_count: 3, avg_banners: 65 });
+    const proven = counterScore({ win_rate: 98, seen_count: 4000, avg_banners: 64 });
+    assert.ok(proven > lucky, `${proven} should beat ${lucky}`);
+    // Same win rate and sample: more banners wins.
+    assert.ok(
+      counterScore({ win_rate: 95, seen_count: 500, avg_banners: 66 }) >
+        counterScore({ win_rate: 95, seen_count: 500, avg_banners: 60 })
+    );
+  });
+
+  test("stats first, then entered order", () => {
+    const ranked = rankRecommendations([
+      { rank: 1, id: "a" },
+      { rank: 2, id: "b", win_rate: 90, seen_count: 100, avg_banners: 60 },
+      { rank: 3, id: "c", win_rate: 99, seen_count: 1000, avg_banners: 64 },
+      { rank: 4, id: "d" },
+    ]);
+    assert.deepEqual(ranked.map((r) => r.id), ["c", "b", "a", "d"]);
+    assert.deepEqual(ranked.map((r) => r.rank), [1, 2, 3, 4]);
+    assert.deepEqual(ranked.map((r) => r.manual_rank), [3, 2, 1, 4]);
+  });
+});
+
+describe("counters with stats", () => {
+  test("saved stats come back and decide the order", async () => {
+    const created = await api("POST", "/api/counters", {
+      body: {
+        defender_unit_ids: [u["Darth Malgus"], u["Sith Trooper A"]],
+        counter_squads: [
+          { unit_ids: [u["Dooku"], u["Sidious"]], notes: "entered first", seen_count: 20, win_rate: 80, avg_banners: 60 },
+          { unit_ids: [u["Maz Kanata"], u["Hunter"]], seen_count: 3000, win_rate: 99, avg_banners: 64.5 },
+          [u["Wrecker"]],
+        ],
+      },
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const recs = created.body.recommended_squads;
+    assert.deepEqual(recs.map((r) => r.units[0].name), ["Maz Kanata", "Dooku", "Wrecker"]);
+    assert.deepEqual(recs.map((r) => r.rank), [1, 2, 3]);
+    assert.deepEqual(recs.map((r) => r.manual_rank), [2, 1, 3]);
+    assert.equal(recs[0].win_rate, 99);
+    assert.equal(recs[0].seen_count, 3000);
+    assert.equal(recs[0].avg_banners, 64.5);
+    assert.ok(recs[0].score > recs[1].score);
+    assert.equal(recs[2].score, null);
+    assert.ok(recs[0].stats_updated_at);
+    assert.equal(recs[2].stats_updated_at, null);
+
+    // The overlay's lookup gets the same best-first order.
+    const lookup = await api("GET", `/api/counters/lookup?defender_unit_ids=${u["Darth Malgus"]},${u["Sith Trooper A"]}`);
+    assert.equal(lookup.body.counters[0].recommended_squads[0].units[0].name, "Maz Kanata");
+
+    const bad = await api("POST", "/api/counters", {
+      body: { defender_unit_ids: [u["Wrecker"]], counter_squads: [{ unit_ids: [u["Hunter"]], win_rate: 140 }] },
+    });
+    assert.equal(bad.status, 400);
+    assert.match(bad.body.error, /win_rate/);
+
+    assert.equal((await api("DELETE", `/api/counters/${created.body.id}`)).status, 204);
+  });
+});
+
+describe("screenshot import", () => {
+  test("creates teams, adds counters, refreshes stats on re-import", async () => {
+    const malgusA = [u["Darth Malgus"], u["Sith Trooper A"]];
+    const malgusB = [u["Darth Malgus"], u["Sith Trooper B"]];
+    const rows = [
+      { defender_unit_ids: malgusA, counter_unit_ids: [u["Maz Kanata"], u["Hunter"]], seen_count: 153, win_rate: 100, avg_banners: 64.8 },
+      { defender_unit_ids: malgusA, counter_unit_ids: [u["Dooku"], u["Sidious"]], seen_count: 144, win_rate: 100, avg_banners: 64.97 },
+      { defender_unit_ids: malgusB, counter_unit_ids: [u["Maz Kanata"], u["Hunter"]], seen_count: 96, win_rate: 100, avg_banners: 64.93 },
+    ];
+    const first = await api("POST", "/api/counters/import", { body: { rows } });
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    assert.equal(first.body.defense_teams_created, 2);
+    assert.equal(first.body.counters_added, 3);
+    assert.equal(first.body.counters_updated, 0);
+
+    const list = (await api("GET", "/api/counters")).body;
+    assert.equal(list.length, 2);
+    const a = list.find((c) => c.defender.units[1].name === "Sith Trooper A");
+    assert.equal(a.source, "import");
+    assert.equal(a.status, "approved");
+    assert.deepEqual(a.recommended_squads.map((r) => r.units[0].name), ["Dooku", "Maz Kanata"], "64.97 > 64.8 banners");
+
+    // Same screenshot later with newer numbers: no duplicates, stats updated.
+    const again = await api("POST", "/api/counters/import", {
+      body: { rows: [{ ...rows[0], seen_count: 400, win_rate: 97.5, avg_banners: 63 }] },
+    });
+    assert.equal(again.body.counters_added, 0);
+    assert.equal(again.body.counters_updated, 1);
+    const after = (await api("GET", `/api/counters/${a.id}`)).body;
+    assert.equal(after.recommended_squads.length, 2);
+    const maz = after.recommended_squads.find((r) => r.units[0].name === "Maz Kanata");
+    assert.equal(maz.seen_count, 400);
+    assert.equal(maz.win_rate, 97.5);
+
+    // Importing into a team that was entered by hand reuses that entry.
+    const manual = await api("POST", "/api/counters", {
+      body: { defender_unit_ids: [u["Wrecker"]], counter_squads: [[u["Hunter"]]] },
+    });
+    const into = await api("POST", "/api/counters/import", {
+      body: { rows: [{ defender_unit_ids: [u["Wrecker"]], counter_unit_ids: [u["Dooku"]], seen_count: 10, win_rate: 90 }] },
+    });
+    assert.equal(into.body.defense_teams_created, 0);
+    assert.deepEqual(into.body.counter_ids, [manual.body.id]);
+    const merged = (await api("GET", `/api/counters/${manual.body.id}`)).body;
+    assert.equal(merged.recommended_squads.length, 2);
+    assert.equal(merged.recommended_squads[0].units[0].name, "Dooku", "the squad with stats ranks first");
+  });
+
+  test("validates rows", async () => {
+    assert.equal((await api("POST", "/api/counters/import", { body: { rows: [] } })).status, 400);
+    const bad = await api("POST", "/api/counters/import", {
+      body: { rows: [{ defender_unit_ids: [u["Wrecker"]], counter_unit_ids: [] }] },
+    });
+    assert.equal(bad.status, 400);
+    const unknownUnit = await api("POST", "/api/counters/import", {
+      body: { rows: [{ defender_unit_ids: [999999], counter_unit_ids: [u["Dooku"]] }] },
+    });
+    assert.equal(unknownUnit.status, 400);
+  });
+});
+
+describe("faces", () => {
+  test("identify a face, then it's in the library and the unit has a picture", async () => {
+    const res = await api("POST", "/api/portraits", {
+      body: { unit_id: u["Maz Kanata"], image: PNG_DATA_URL, fingerprint: fingerprint(1), source: "test" },
+    });
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    assert.ok(existsSync(path.join(env.uploadDir, res.body.image_path)));
+
+    const library = (await api("GET", "/api/portraits/library")).body;
+    assert.equal(library.length, 1);
+    assert.equal(library[0].unit_id, u["Maz Kanata"]);
+    assert.equal(library[0].fingerprint.length, 600);
+
+    const units = (await api("GET", "/api/units")).body;
+    assert.equal(units.find((x) => x.id === u["Maz Kanata"]).image_path, res.body.image_path);
+
+    // A second face for the same unit doesn't replace its picture.
+    const second = await api("POST", "/api/portraits", {
+      body: { unit_id: u["Maz Kanata"], image: PNG_DATA_URL, fingerprint: fingerprint(2) },
+    });
+    const units2 = (await api("GET", "/api/units")).body;
+    assert.equal(units2.find((x) => x.id === u["Maz Kanata"]).image_path, res.body.image_path);
+    assert.equal((await api("DELETE", `/api/portraits/${second.body.id}`)).status, 204);
+
+    assert.equal(
+      (await api("POST", "/api/portraits", { body: { unit_id: 999999, image: PNG_DATA_URL, fingerprint: fingerprint(3) } })).status,
+      400
+    );
+    assert.equal(
+      (await api("POST", "/api/portraits", { body: { unit_id: u["Hunter"], image: "data:image/png;base64,AAAA", fingerprint: fingerprint(3) } })).status,
+      400
+    );
+    assert.equal(
+      (await api("POST", "/api/portraits", { body: { unit_id: u["Hunter"], image: PNG_DATA_URL, fingerprint: [1, 2] } })).status,
+      400
+    );
+  });
+
+  test("queue: dedupes, identifies (with look-alikes), and dismisses", async () => {
+    const queued = await api("POST", "/api/portraits/unidentified", {
+      body: {
+        items: [
+          { image: PNG_DATA_URL, fingerprint: fingerprint(10), source: "screenshot" },
+          { image: PNG_DATA_URL, fingerprint: fingerprint(10, 0.0005) }, // same face again
+          { image: PNG_DATA_URL, fingerprint: fingerprint(11) },
+          { image: PNG_DATA_URL, fingerprint: fingerprint(1) }, // already known (Maz)
+        ],
+      },
+    });
+    assert.equal(queued.status, 201, JSON.stringify(queued.body));
+    assert.deepEqual(queued.body, { added: 2, skipped: 2 });
+
+    let queue = (await api("GET", "/api/portraits/unidentified")).body;
+    assert.equal(queue.length, 2);
+
+    // Re-uploading the same screenshot adds nothing.
+    const again = await api("POST", "/api/portraits/unidentified", {
+      body: { items: [{ image: PNG_DATA_URL, fingerprint: fingerprint(10) }] },
+    });
+    assert.deepEqual(again.body, { added: 0, skipped: 1 });
+
+    const ident = await api("POST", `/api/portraits/unidentified/${queue[0].id}/identify`, {
+      body: { unit_id: u["Hunter"] },
+    });
+    assert.equal(ident.status, 200, JSON.stringify(ident.body));
+    assert.equal(ident.body.resolved, 1);
+    const library = (await api("GET", "/api/portraits/library")).body;
+    assert.ok(library.some((f) => f.unit_id === u["Hunter"]));
+
+    queue = (await api("GET", "/api/portraits/unidentified")).body;
+    assert.equal(queue.length, 1);
+    assert.equal((await api("DELETE", `/api/portraits/unidentified/${queue[0].id}`)).status, 204);
+    assert.equal((await api("GET", "/api/portraits/unidentified")).body.length, 0);
+    assert.equal((await api("DELETE", `/api/portraits/unidentified/${queue[0].id}`)).status, 404);
+    assert.equal((await api("POST", "/api/portraits/unidentified/999/identify", { body: { unit_id: u["Hunter"] } })).status, 404);
+  });
+});

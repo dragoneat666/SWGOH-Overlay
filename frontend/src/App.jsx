@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { api, getToken, onUnauthorized, setToken } from "./api.js";
 import { UnitsProvider } from "./units.jsx";
 import { ToastProvider } from "./toast.jsx";
@@ -9,12 +9,8 @@ import CountersPage from "./pages/CountersPage.jsx";
 import CounterEditor from "./pages/CounterEditor.jsx";
 import UnitsPage from "./pages/UnitsPage.jsx";
 import ReviewPage from "./pages/ReviewPage.jsx";
-
-const NAV = [
-  { to: "/", label: "Counters", icon: "swords", end: true },
-  { to: "/units", label: "Units", icon: "users" },
-  { to: "/review", label: "Review", icon: "inbox" },
-];
+import ImportPage from "./pages/ImportPage.jsx";
+import FacesPage from "./pages/FacesPage.jsx";
 
 export default function App() {
   const [signedIn, setSignedIn] = useState(() => Boolean(getToken()));
@@ -37,65 +33,89 @@ export default function App() {
   return (
     <ToastProvider>
       <UnitsProvider>
-        <div className="shell">
-          <header className="topbar">
-            <div className="brand">
-              <img src="/icon.svg" alt="" width="28" height="28" />
-              <span>SWGOH Counters</span>
-            </div>
-            <nav className="topnav" aria-label="Main">
-              {NAV.map((item) => (
-                <NavLink key={item.to} to={item.to} end={item.end}>
-                  {item.label}
-                  {item.to === "/review" && <PendingBadge />}
-                </NavLink>
-              ))}
-            </nav>
-            <button className="btn ghost small" onClick={signOut}>
-              Sign out
-            </button>
-          </header>
-
-          <main className="content">
-            <Routes>
-              <Route path="/" element={<CountersPage />} />
-              <Route path="/counters/new" element={<CounterEditor />} />
-              <Route path="/counters/:id" element={<CounterEditor />} />
-              <Route path="/units" element={<UnitsPage />} />
-              <Route path="/review" element={<ReviewPage />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </main>
-
-          <nav className="bottomnav" aria-label="Main">
-            {NAV.map((item) => (
-              <NavLink key={item.to} to={item.to} end={item.end}>
-                <Icon name={item.icon} />
-                <span>
-                  {item.label}
-                  {item.to === "/review" && <PendingBadge />}
-                </span>
-              </NavLink>
-            ))}
-          </nav>
-        </div>
+        <Shell onSignOut={signOut} />
       </UnitsProvider>
     </ToastProvider>
   );
 }
 
-// Count of OCR/import submissions waiting for review. Nothing creates those
-// yet, so this normally stays hidden.
-function PendingBadge() {
-  const [count, setCount] = useState(0);
-  useEffect(() => {
-    let cancelled = false;
-    api("/counters?status=pending")
-      .then((rows) => !cancelled && setCount(rows.length))
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
+// Badge counts for the nav: faces waiting to be identified, and automated
+// submissions waiting for review (the Review tab only shows when there are
+// some - nothing creates those yet).
+function useNavCounts() {
+  const location = useLocation();
+  const [counts, setCounts] = useState({ faces: 0, review: 0 });
+
+  const refresh = useCallback(() => {
+    Promise.all([
+      api("/portraits/unidentified").catch(() => []),
+      api("/counters?status=pending").catch(() => []),
+    ]).then(([faces, pending]) => setCounts({ faces: faces.length, review: pending.length }));
   }, []);
-  return count > 0 ? <span className="badge">{count}</span> : null;
+
+  useEffect(refresh, [refresh, location.pathname]);
+  useEffect(() => {
+    window.addEventListener("faces-changed", refresh);
+    return () => window.removeEventListener("faces-changed", refresh);
+  }, [refresh]);
+  return counts;
+}
+
+function Shell({ onSignOut }) {
+  const counts = useNavCounts();
+  const nav = [
+    { to: "/", label: "Counters", icon: "swords", end: true },
+    { to: "/import", label: "Import", icon: "upload" },
+    { to: "/faces", label: "Faces", icon: "scan", badge: counts.faces },
+    { to: "/units", label: "Units", icon: "users" },
+    ...(counts.review > 0 ? [{ to: "/review", label: "Review", icon: "inbox", badge: counts.review }] : []),
+  ];
+  const badge = (n) => (n > 0 ? <span className="badge">{n}</span> : null);
+
+  return (
+    <div className="shell">
+      <header className="topbar">
+        <div className="brand">
+          <img src="/icon.svg" alt="" width="28" height="28" />
+          <span>SWGOH Counters</span>
+        </div>
+        <nav className="topnav" aria-label="Main">
+          {nav.map((item) => (
+            <NavLink key={item.to} to={item.to} end={item.end}>
+              {item.label}
+              {badge(item.badge)}
+            </NavLink>
+          ))}
+        </nav>
+        <button className="btn ghost small" onClick={onSignOut}>
+          Sign out
+        </button>
+      </header>
+
+      <main className="content">
+        <Routes>
+          <Route path="/" element={<CountersPage />} />
+          <Route path="/counters/new" element={<CounterEditor />} />
+          <Route path="/counters/:id" element={<CounterEditor />} />
+          <Route path="/import" element={<ImportPage />} />
+          <Route path="/faces" element={<FacesPage />} />
+          <Route path="/units" element={<UnitsPage />} />
+          <Route path="/review" element={<ReviewPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </main>
+
+      <nav className="bottomnav" aria-label="Main" style={{ "--nav-count": nav.length }}>
+        {nav.map((item) => (
+          <NavLink key={item.to} to={item.to} end={item.end}>
+            <Icon name={item.icon} />
+            <span>
+              {item.label}
+              {badge(item.badge)}
+            </span>
+          </NavLink>
+        ))}
+      </nav>
+    </div>
+  );
 }
