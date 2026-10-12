@@ -10,6 +10,7 @@ import CounterEditor from "./pages/CounterEditor.jsx";
 import UnitsPage from "./pages/UnitsPage.jsx";
 import ReviewPage from "./pages/ReviewPage.jsx";
 import ImportPage from "./pages/ImportPage.jsx";
+import OffensePage from "./pages/OffensePage.jsx";
 import FacesPage from "./pages/FacesPage.jsx";
 
 export default function App() {
@@ -64,7 +65,8 @@ function useNavCounts() {
 function Shell({ onSignOut }) {
   const counts = useNavCounts();
   const nav = [
-    { to: "/", label: "Counters", icon: "swords", end: true },
+    { to: "/", label: "Defense", icon: "shield", end: true },
+    { to: "/offense", label: "Offense", icon: "swords" },
     { to: "/import", label: "Import", icon: "upload" },
     { to: "/faces", label: "Faces", icon: "scan", badge: counts.faces },
     { to: "/units", label: "Units", icon: "users" },
@@ -97,6 +99,7 @@ function Shell({ onSignOut }) {
           <Route path="/" element={<CountersPage />} />
           <Route path="/counters/new" element={<CounterEditor />} />
           <Route path="/counters/:id" element={<CounterEditor />} />
+          <Route path="/offense" element={<OffensePage />} />
           <Route path="/import" element={<ImportPage />} />
           <Route path="/faces" element={<FacesPage />} />
           <Route path="/units" element={<UnitsPage />} />

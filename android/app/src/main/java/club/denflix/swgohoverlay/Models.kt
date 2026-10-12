@@ -32,23 +32,18 @@ data class CounterSquad(
     val seenCount: Int? = null,
     val avgBanners: Double? = null,
 ) {
-    /** "100% win · 153 seen · 64.8 ⚑", or null when there are no stats. */
+    /** "100% win · 64.8 ⚑", or null when there are no stats. ("Seen" is a
+     * per-season number that goes stale, so it's not shown - it still
+     * weighs the server's ranking.) */
     val statsLabel: String?
         get() {
             val parts = mutableListOf<String>()
             winRate?.let { parts += "${trimNumber(it)}% win" }
-            seenCount?.let { parts += "${formatCount(it)} seen" }
             avgBanners?.let { parts += "${trimNumber(it)} ⚑" }
             return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
         }
 
     private fun trimNumber(v: Double) = if (v % 1.0 == 0.0) v.toLong().toString() else v.toString()
-
-    private fun formatCount(n: Int) = when {
-        n >= 10000 -> "${n / 1000}k"
-        n >= 1000 -> String.format(java.util.Locale.US, "%.1fk", n / 1000.0).replace(".0k", "k")
-        else -> n.toString()
-    }
 }
 
 /** A counter entry for one defense team (normally exactly one per team). */

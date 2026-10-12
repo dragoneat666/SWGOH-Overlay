@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
-import { counterMatches } from "../unitSearch.js";
+import { defenseMatches } from "../unitSearch.js";
 import SquadView from "../components/SquadView.jsx";
 import StatsLine from "../components/StatsLine.jsx";
 import Icon from "../components/Icon.jsx";
@@ -44,7 +44,7 @@ export default function CountersPage() {
 
   const shown = useMemo(() => {
     if (!counters) return [];
-    return counters.filter((c) => counterMatches(c, query)).sort(SORTS[sort].compare);
+    return counters.filter((c) => defenseMatches(c, query)).sort(SORTS[sort].compare);
   }, [counters, query, sort]);
 
   function changeSort(value) {
@@ -59,11 +59,15 @@ export default function CountersPage() {
   return (
     <div className="page">
       <div className="page-head">
-        <h1>Counters</h1>
+        <h1>Defense</h1>
         <Link to="/counters/new" className="btn primary">
           <Icon name="plus" size={18} /> New counter
         </Link>
       </div>
+      <p className="muted page-intro">
+        Search for the team you will be facing to see which squads are best against it. Counters are listed best
+        first, ranked from their win rate and average banners.
+      </p>
 
       <div className="toolbar">
         <div className="unit-search grow">
@@ -71,8 +75,8 @@ export default function CountersPage() {
           <input
             type="search"
             value={query}
-            placeholder="Find a team (e.g. SLKR)"
-            aria-label="Search counters"
+            placeholder="Team you're facing (e.g. SLKR)"
+            aria-label="Search defense teams"
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>

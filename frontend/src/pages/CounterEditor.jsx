@@ -205,7 +205,7 @@ export default function CounterEditor() {
 
       <h2 className="section-title">Counters</h2>
       <p className="muted small">
-        Ranked automatically from their stats (win rate, how often they've been seen, average banners). Squads
+        Ranked automatically from their win rate and average banners. Squads
         without stats come after those, in the order below.
       </p>
 
@@ -255,18 +255,8 @@ export default function CounterEditor() {
               onChange={(e) => updateSquad(squad.key, { notes: e.target.value })}
             />
           </label>
+          {/* "Seen" isn't editable here, but a stored value is kept on save. */}
           <div className="stats-inputs">
-            <label className="field">
-              <span className="field-label">Seen</span>
-              <input
-                type="number"
-                inputMode="numeric"
-                min="0"
-                value={squad.seen}
-                placeholder="-"
-                onChange={(e) => updateSquad(squad.key, { seen: e.target.value })}
-              />
-            </label>
             <label className="field">
               <span className="field-label">Win %</span>
               <input

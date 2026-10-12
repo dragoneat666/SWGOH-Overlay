@@ -1,15 +1,10 @@
-// "100% win · 153 seen · 64.8 ⚑" for a counter squad, showing whichever
-// stats it has. Nothing at all when it has none.
-export function formatCount(n) {
-  if (n >= 10000) return `${Math.round(n / 1000)}k`;
-  if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k`;
-  return String(n);
-}
-
+// "100% win · 64.8 ⚑ avg" for a counter squad, showing whichever stats it
+// has. Nothing at all when it has none. (How often a squad was "seen" is
+// stored and still weighs the ranking, but isn't shown - it's a per-season
+// number that goes stale.)
 export default function StatsLine({ squad }) {
   const parts = [];
   if (squad.win_rate != null) parts.push(["win", `${squad.win_rate}%`]);
-  if (squad.seen_count != null) parts.push(["seen", formatCount(squad.seen_count)]);
   if (squad.avg_banners != null) parts.push(["⚑ avg", squad.avg_banners]);
   if (parts.length === 0) return null;
   return (

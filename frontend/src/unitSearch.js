@@ -48,13 +48,12 @@ export function searchUnits(units, query, { exclude = new Set(), limit = 12, kin
   return results.slice(0, limit).map((r) => r.unit);
 }
 
-// For the counters list search box: does any unit in the entry (defender or
-// any counter squad), or any of its notes, match?
-export function counterMatches(counter, query) {
+// For the Defense page search box: does a unit in the defense team, or the
+// defense team's notes, match? Counter squads are deliberately ignored -
+// "SLKR" should find SLKR defenses, not defenses that SLKR attacks.
+export function defenseMatches(counter, query) {
   const q = fold(query).trim();
   if (!q) return true;
-  const squads = [counter.defender, ...counter.recommended_squads];
-  if (squads.some((s) => s && s.units.some((u) => matchRank(u, q) !== null))) return true;
-  const notes = [counter.notes, ...counter.recommended_squads.map((s) => s.notes)];
-  return notes.some((n) => n && fold(n).includes(q));
+  if (counter.defender && counter.defender.units.some((u) => matchRank(u, q) !== null)) return true;
+  return Boolean(counter.notes && fold(counter.notes).includes(q));
 }

@@ -301,6 +301,81 @@ router.post("/import", asyncHandler(async (req, res) => {
   res.json(summary);
 }));
 
+// GET /api/counters/offense?unit_ids=3,9,14 - "what does this squad beat?"
+// unit_ids is an attacking squad, leader first (1-5 units). Finds every
+// recorded counter squad with that leader that includes all of those
+// units (so a partial squad finds the full squads it's part of), and
+// returns the defense teams they've beaten - best win rate first.
+router.get("/offense", asyncHandler(async (req, res) => {
+  const unitIds = parseUnitIdQuery(req.query.unit_ids, "unit_ids");
+  const { rows: squadRows } = await db.query(
+    `SELECT sm.squad_id
+     FROM squad_members sm
+     WHERE sm.squad_id IN (SELECT squad_id FROM squad_members WHERE position = 0 AND unit_id = $2)
+     GROUP BY sm.squad_id
+     HAVING COUNT(*) FILTER (WHERE sm.unit_id = ANY($1::int[])) = $3`,
+    [unitIds, unitIds[0], unitIds.length]
+  );
+  if (squadRows.length === 0) return res.json({ results: [] });
+
+  const { rows } = await db.query(
+    `SELECT r.counter_id, r.counter_squad_id, r.win_rate, r.avg_banners, r.notes, c.defender_squad_id
+     FROM counter_recommendations r
+     JOIN counters c ON c.id = r.counter_id AND c.status = 'approved'
+     WHERE r.counter_squad_id = ANY($1::int[])`,
+    [squadRows.map((r) => r.squad_id)]
+  );
+  const squads = await getSquads([...new Set(rows.flatMap((r) => [r.counter_squad_id, r.defender_squad_id]))]);
+
+  const results = rows
+    .map((r) => ({
+      counter_id: r.counter_id,
+      win_rate: r.win_rate,
+      avg_banners: r.avg_banners,
+      notes: r.notes,
+      exact: squads.get(r.counter_squad_id).units.length === unitIds.length,
+      squad: squads.get(r.counter_squad_id),
+      defender: squads.get(r.defender_squad_id),
+    }))
+    .sort(
+      (a, b) =>
+        (b.win_rate ?? -1) - (a.win_rate ?? -1) ||
+        (b.avg_banners ?? -1) - (a.avg_banners ?? -1) ||
+        Number(b.exact) - Number(a.exact)
+    );
+  res.json({ results });
+}));
+
+// GET /api/counters/offense/popular?limit=12 - attack squads that show up
+// against the most defense teams in your data, with their average win rate
+// and banners. Only counters with a recorded win rate count.
+router.get("/offense/popular", asyncHandler(async (req, res) => {
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 12, 1), 50);
+  const { rows } = await db.query(
+    `SELECT r.counter_squad_id,
+            COUNT(DISTINCT c.defender_squad_id)::int AS defense_teams,
+            AVG(r.win_rate) AS avg_win_rate,
+            AVG(r.avg_banners) AS avg_banners
+     FROM counter_recommendations r
+     JOIN counters c ON c.id = r.counter_id AND c.status = 'approved'
+     WHERE r.win_rate IS NOT NULL
+     GROUP BY r.counter_squad_id
+     ORDER BY defense_teams DESC, avg_win_rate DESC, avg_banners DESC NULLS LAST
+     LIMIT $1`,
+    [limit]
+  );
+  const squads = await getSquads(rows.map((r) => r.counter_squad_id));
+  const round = (v, d) => (v == null ? null : Math.round(Number(v) * 10 ** d) / 10 ** d);
+  res.json({
+    squads: rows.map((r) => ({
+      ...squads.get(r.counter_squad_id),
+      defense_teams: r.defense_teams,
+      avg_win_rate: round(r.avg_win_rate, 1),
+      avg_banners: round(r.avg_banners, 2),
+    })),
+  });
+}));
+
 // GET /api/counters/lookup?defender_unit_ids=12,4,87
 // Exact lookup: the defender team with this leader (first id) and exactly
 // these members. Only returns approved counters. NOTE: the named routes

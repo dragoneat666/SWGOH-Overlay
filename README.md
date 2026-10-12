@@ -69,9 +69,18 @@ To update later: pull the new image in Dockge and restart the `api` container.
 Open `http://<server>:4001/` (or wherever your reverse proxy points at port
 4001) and sign in with your `API_TOKEN`. The browser remembers it.
 
+Tabs:
+
+- **Defense** - search the defense team you're facing to see the squads
+  that beat it, best first (ranked from win rate and average banners).
+- **Offense** - build an attack squad (leader + up to 4) and see which
+  defense teams it beats and its win rate against each; below, the squads
+  that counter the most defense teams in your data.
+- **Import**, **Faces**, **Units** - see below.
+
 First time: go to **Units → Import from game** to load every character and
-ship from the game's own data (takes a minute). Then add counters from the
-**Counters** tab, or:
+ship from the game's own data (takes a minute). Then add counters with
+**New counter** on the Defense tab, or:
 
 **Import** - paste (Ctrl+V) or drop a screenshot of a swgoh.gg GAC counters
 list (the rows between two ads). The app reads both squads and the Seen /

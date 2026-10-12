@@ -37,7 +37,7 @@ class ApiJsonTest {
         // Battle stats (only on the first one).
         assertEquals(98.5, squads[0].winRate!!, 0.0001)
         assertEquals(4096, squads[0].seenCount)
-        assertEquals("98.5% win · 4.1k seen · 64.8 ⚑", squads[0].statsLabel)
+        assertEquals("98.5% win · 64.8 ⚑", squads[0].statsLabel)
         assertNull(squads[1].winRate)
         assertNull(squads[1].statsLabel)
     }

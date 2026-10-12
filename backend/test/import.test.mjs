@@ -167,6 +167,57 @@ describe("screenshot import", () => {
   });
 });
 
+describe("offense", () => {
+  test("what a squad beats, and the most-used squads", async () => {
+    const o = {};
+    for (const name of ["O Lead", "O Two", "O Three", "O Alt", "Def One", "Def Two", "Def Three", "Other Lead"]) {
+      o[name] = (await api("POST", "/api/units", { body: { name } })).body.id;
+    }
+    const full = [o["O Lead"], o["O Two"], o["O Three"]];
+    const variant = [o["O Lead"], o["O Two"], o["O Alt"]];
+    const imported = await api("POST", "/api/counters/import", {
+      body: {
+        rows: [
+          { defender_unit_ids: [o["Def One"]], counter_unit_ids: full, seen_count: 40, win_rate: 95, avg_banners: 63 },
+          { defender_unit_ids: [o["Def Two"]], counter_unit_ids: full, seen_count: 40, win_rate: 99, avg_banners: 62 },
+          { defender_unit_ids: [o["Def Three"]], counter_unit_ids: variant, seen_count: 40, win_rate: 80, avg_banners: 60 },
+          { defender_unit_ids: [o["Def Three"]], counter_unit_ids: [o["Other Lead"]], seen_count: 40, win_rate: 100, avg_banners: 65 },
+        ],
+      },
+    });
+    assert.equal(imported.status, 200, JSON.stringify(imported.body));
+
+    // Exact squad: the two defenses it beat, best win rate first.
+    const exact = await api("GET", `/api/counters/offense?unit_ids=${full.join(",")}`);
+    assert.equal(exact.status, 200);
+    assert.deepEqual(exact.body.results.map((r) => r.defender.units[0].name), ["Def Two", "Def One"]);
+    assert.ok(exact.body.results.every((r) => r.exact));
+    assert.equal(exact.body.results[0].win_rate, 99);
+
+    // Leader + one member: finds both full squads that include them.
+    const partial = await api("GET", `/api/counters/offense?unit_ids=${o["O Lead"]},${o["O Two"]}`);
+    assert.equal(partial.body.results.length, 3);
+    assert.ok(partial.body.results.every((r) => !r.exact));
+    assert.equal(partial.body.results[2].squad.units[2].name, "O Alt");
+
+    // Same units but a different leader is a different squad.
+    const wrongLead = await api("GET", `/api/counters/offense?unit_ids=${o["O Two"]},${o["O Lead"]}`);
+    assert.deepEqual(wrongLead.body.results, []);
+    assert.equal((await api("GET", "/api/counters/offense")).status, 400);
+
+    // Popular: the full squad beats 2 defense teams - more than the others.
+    const popular = await api("GET", "/api/counters/offense/popular?limit=50");
+    assert.equal(popular.status, 200);
+    const top = popular.body.squads.find((s) => s.units[0].name === "O Lead" && s.units.length === 3 && s.units[2].name === "O Three");
+    assert.equal(top.defense_teams, 2);
+    assert.equal(top.avg_win_rate, 97);
+    assert.equal(top.avg_banners, 62.5);
+    const iTop = popular.body.squads.indexOf(top);
+    const iOther = popular.body.squads.findIndex((s) => s.units[0].name === "Other Lead");
+    assert.ok(iTop < iOther, "beating more defense teams ranks higher");
+  });
+});
+
 describe("faces", () => {
   test("identify a face, then it's in the library and the unit has a picture", async () => {
     const res = await api("POST", "/api/portraits", {

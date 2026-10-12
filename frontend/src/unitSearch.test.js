@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { initials, searchUnits, counterMatches } from "./unitSearch.js";
+import { initials, searchUnits, defenseMatches } from "./unitSearch.js";
 
 const units = [
   { id: 1, name: "Supreme Leader Kylo Ren", definition_id: "SUPREMELEADERKYLOREN", is_ship: false },
@@ -42,15 +42,16 @@ test("exclude and kind filters", () => {
   assert.equal(searchUnits(units, "   ").length, 0);
 });
 
-test("counterMatches looks at every squad and the notes", () => {
+test("defenseMatches only looks at the defense team and its notes", () => {
   const counter = {
     notes: "Bring Wat",
     defender: { units: [units[0], units[1]] },
     recommended_squads: [{ notes: "kill hux first", units: [units[4]] }],
   };
-  assert.ok(counterMatches(counter, "slkr"));
-  assert.ok(counterMatches(counter, "luke"));
-  assert.ok(counterMatches(counter, "hux"));
-  assert.ok(counterMatches(counter, ""));
-  assert.ok(!counterMatches(counter, "padme"));
+  assert.ok(defenseMatches(counter, "slkr"));
+  assert.ok(defenseMatches(counter, "kylo"));
+  assert.ok(defenseMatches(counter, "wat"), "defense notes");
+  assert.ok(defenseMatches(counter, ""));
+  assert.ok(!defenseMatches(counter, "luke"), "a counter squad's unit doesn't count");
+  assert.ok(!defenseMatches(counter, "hux"), "a counter squad's notes don't count");
 });

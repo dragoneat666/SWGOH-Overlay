@@ -314,17 +314,8 @@ export default function ImportPage() {
                   <div className="squad-avatars">{r.attack.map((s, i) => faceCell(s, i))}</div>
                   <span className="small">{squadNames(r.attack)}</span>
                 </div>
+                {/* Seen is still read and saved (it weighs the ranking) but not shown. */}
                 <div className="import-stats">
-                  <label>
-                    <span className="eyebrow">Seen</span>
-                    <input
-                      type="number"
-                      min="0"
-                      value={r.stats.seen_count ?? ""}
-                      className={r.stats.seen_count == null ? "invalid" : ""}
-                      onChange={(e) => updateStat(r.index, "seen_count", e.target.value)}
-                    />
-                  </label>
                   <label>
                     <span className="eyebrow">Win %</span>
                     <input
