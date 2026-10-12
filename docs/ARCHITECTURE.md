@@ -99,7 +99,7 @@ ally code) and against squads you've already committed to this GAC round.
   `/gac/counters/*?*`, the ToS bans automated access). Instead you take
   screenshots of their counters list yourself and import them in the web
   UI - the same data you'd otherwise type, read for you.
-- Everything happens in the browser (frontend/src/scan/): rows are found
+- Everything happens in the browser (shared/scan/): rows are found
   from the gaps between swgoh.gg's row "bubbles", portraits are the square
   full-height blobs, the three numbers sit between the two squads. Numbers
   are read with tesseract.js, served from our own server (no CDN). You
@@ -117,6 +117,27 @@ ally code) and against squads you've already committed to this GAC round.
   toward 75% by 20 imaginary battles, so tiny samples can't top the list) x
   average banners. API responses list counters best first with `rank` =
   recommended position, so older app versions show the new order unchanged.
+
+## In-game screen reading (GAC map)
+
+- The overlay takes one screenshot through MediaProjection (Android's
+  "Start recording or casting?" consent, asked once per overlay session; a
+  foreground service of type mediaProjection holds it) and posts it as JPEG
+  to `POST /api/scan/gac`. The phone does no image work - the server reuses
+  the same JS as the web importer (shared/scan/gac.mjs + faces.mjs), so
+  there's one implementation to test.
+- Finding squads: each defense squad sits on a dark-blue panel; portraits
+  are the content runs across the panel's middle band. Everything is scaled
+  from the distance between portraits (it doesn't change with ring color,
+  relic badges or screen size). A squad is **lit** (still to beat) when its
+  yellow stars show; darkened squads are counted as beaten and skipped.
+- The fingerprint only uses the inner 70% of the portrait, so gear/relic
+  rings and badges don't matter. Game portraits match swgoh.gg portraits
+  less well (~0.4-0.7 for the right unit, still ranked first on real
+  screenshots), so those become suggestions; once you confirm one, that
+  game face is stored and matches ~1.0 from then on.
+- When every face of a squad is known the API includes the best-match
+  defense teams (`matchDefense`), so the overlay shows counters right away.
 
 ## Squad identity & matching
 
@@ -193,11 +214,7 @@ ally code) and against squads you've already committed to this GAC round.
 
 ## Explicitly out of scope for now
 
-- Live screen-capture-driven auto-detection of the enemy squad is the target
-  end state, but the recommended build order is: manual/searchable team
-  selection first (no CV needed, ships something usable immediately), then
-  layer in automatic icon recognition once the matching engine (built for
-  unit registration) has been proven out on real screenshots.
+- Screen reading of anything but the GAC character map (fleets, TW, ...).
 - No gear/level-aware filtering of counter recommendations (see above).
 - No GAC-bracket-opponent live scouting (HotUtils/DSR-style real-account
   scouting) — deliberately avoided; that mechanism isn't something EA has

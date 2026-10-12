@@ -8,6 +8,9 @@
          while you've switched to SWGoH -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- "Scan screen": capturing the GAC screen needs screen-capture consent
+         (asked once per overlay session) and this foreground-service type -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <!-- Lets the "overlay running" notification (with its Stop button) show
          on Android 13+ - optional, asked for on first Open Overlay -->
@@ -41,10 +44,20 @@
             android:exported="false"
             android:label="@string/settings_title" />
 
+        <!-- Shows Android's screen-capture prompt for "Scan screen". Its own
+             task (empty affinity), so it doesn't bring the app's main screen
+             up over the game; finishing it returns to the game. -->
+        <activity
+            android:name=".CaptureConsentActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity=""
+            android:theme="@style/Theme.SWGOHOverlay.Invisible" />
+
         <service
             android:name=".OverlayService"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="specialUse|mediaProjection">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Floating counter-lookup overlay for a mobile game the user is actively playing" />

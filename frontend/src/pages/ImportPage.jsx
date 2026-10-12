@@ -4,7 +4,7 @@ import { api } from "../api.js";
 import { useUnits } from "../units.jsx";
 import { useToast } from "../toast.jsx";
 import { scanScreenshot } from "../scan/scanScreenshot.js";
-import { identify, groupFaces } from "../scan/faces.js";
+import { identify, groupFaces } from "../../../shared/scan/faces.mjs";
 import UnitAvatar from "../components/UnitAvatar.jsx";
 import UnitPicker from "../components/UnitPicker.jsx";
 import Icon from "../components/Icon.jsx";

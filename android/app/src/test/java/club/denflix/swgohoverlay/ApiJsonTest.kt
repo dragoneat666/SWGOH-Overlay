@@ -54,6 +54,28 @@ class ApiJsonTest {
         assertEquals(setOf("VADER", "GLREY"), owned)
     }
 
+    @Test fun parsesScanResults() {
+        val scan = ApiJson.parseScan(JSONObject(
+            """
+            {"width":2404,"height":1080,"beaten":1,"squads":[{"slots":[
+              {"unit_id":7,"score":0.998,"candidates":[{"unit_id":7,"name":"Finn","score":0.998}],"image":"data:image/png;base64,AAAA","fingerprint":[0.1,-0.2]},
+              {"unit_id":null,"score":0.61,"candidates":[{"unit_id":9,"name":"Rey","score":0.61},{"unit_id":4,"name":null,"score":0.3}],"image":"data:image/png;base64,BBBB","fingerprint":[0.3]}
+            ],"matches":null}]}
+            """.trimIndent()
+        ))
+        assertEquals(1, scan.beaten)
+        val slots = scan.squads.single().slots
+        assertEquals(7, slots[0].unitId)
+        assertNull(slots[1].unitId)
+        assertEquals(0.61, slots[1].score!!, 0.0001)
+        assertEquals(listOf(9, 4), slots[1].candidates.map { it.unitId })
+        assertEquals("Rey", slots[1].candidates[0].name)
+        assertNull(slots[1].candidates[1].name)
+        assertEquals("[0.3]", slots[1].fingerprintJson)
+        assertEquals("data:image/png;base64,BBBB", slots[1].image)
+        assertEquals(emptyList<ScanSquad>(), ApiJson.parseScan(JSONObject("""{"beaten":0,"squads":[]}""")).squads)
+    }
+
     @Test fun emptyResponses() {
         assertEquals(emptyList<TeamMatch>(), ApiJson.parseMatches(JSONObject("""{"matches":[]}""")))
         assertEquals(emptyList<Squad>(), ApiJson.parseDefenderSquads(JSONObject("""{"squads":[]}""")))

@@ -9,7 +9,7 @@
     "prebuild": "node scripts/copy-ocr-assets.mjs",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test \"src/**/*.test.js\""
+    "test": "node --test \"src/**/*.test.js\" \"../shared/**/*.test.mjs\""
   },
   "dependencies": {
     "@tesseract.js-data/eng": "^1.0.0",

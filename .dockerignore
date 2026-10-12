@@ -8,3 +8,5 @@ Claude outputs
 **/.env
 backend/test
 backend/scripts
+shared/**/*.test.mjs
+shared/**/synthetic.mjs

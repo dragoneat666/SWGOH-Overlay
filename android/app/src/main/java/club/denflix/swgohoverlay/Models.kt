@@ -59,6 +59,25 @@ data class TeamMatch(
     val counters: List<CounterEntry>,
 )
 
+/** A suggestion for an unrecognized face (from POST /api/scan/gac). */
+data class ScanCandidate(val unitId: Int, val name: String?, val score: Double)
+
+/** One portrait read off the screen. unitId is null until it's identified. */
+data class ScanSlot(
+    val unitId: Int?,
+    val score: Double?,
+    val candidates: List<ScanCandidate>,
+    /** "data:image/png;base64,..." crop of the face. */
+    val image: String,
+    /** The face's fingerprint as JSON, sent back when identifying it. */
+    val fingerprintJson: String,
+)
+
+data class ScanSquad(val slots: List<ScanSlot>)
+
+/** Result of scanning the GAC territory screen: the squads still standing. */
+data class ScanResult(val beaten: Int, val squads: List<ScanSquad>)
+
 object ApiJson {
 
     private fun JSONObject.optStringOrNull(key: String): String? =
@@ -117,6 +136,30 @@ object ApiJson {
     fun parseDefenderSquads(o: JSONObject): List<Squad> {
         val arr = o.optJSONArray("squads") ?: return emptyList()
         return (0 until arr.length()).map { parseSquad(arr.getJSONObject(it)) }
+    }
+
+    fun parseScan(o: JSONObject): ScanResult {
+        val squads = o.optJSONArray("squads") ?: JSONArray()
+        return ScanResult(
+            beaten = o.optInt("beaten", 0),
+            squads = (0 until squads.length()).map { i ->
+                val slots = squads.getJSONObject(i).optJSONArray("slots") ?: JSONArray()
+                ScanSquad((0 until slots.length()).map { k ->
+                    val s = slots.getJSONObject(k)
+                    val cands = s.optJSONArray("candidates") ?: JSONArray()
+                    ScanSlot(
+                        unitId = if (s.isNull("unit_id")) null else s.getInt("unit_id"),
+                        score = if (s.isNull("score")) null else s.getDouble("score"),
+                        candidates = (0 until cands.length()).map { c ->
+                            val cand = cands.getJSONObject(c)
+                            ScanCandidate(cand.getInt("unit_id"), cand.optStringOrNull("name"), cand.optDouble("score", 0.0))
+                        },
+                        image = s.optString("image", ""),
+                        fingerprintJson = (s.optJSONArray("fingerprint") ?: JSONArray()).toString(),
+                    )
+                })
+            },
+        )
     }
 
     /** Owned game ids from /api/roster/:allyCode. */

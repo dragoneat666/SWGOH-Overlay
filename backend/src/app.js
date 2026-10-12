@@ -8,6 +8,7 @@ const unitsRouter = require("./routes/units");
 const countersRouter = require("./routes/counters");
 const rosterRouter = require("./routes/roster");
 const portraitsRouter = require("./routes/portraits");
+const scanRouter = require("./routes/scan");
 
 // Builds the Express app without starting it, so tests can run it on a
 // random port against a throwaway database.
@@ -31,6 +32,7 @@ function createApp() {
   api.use("/counters", countersRouter);
   api.use("/roster", rosterRouter);
   api.use("/portraits", portraitsRouter);
+  api.use("/scan", scanRouter);
   api.use((req, res) => res.status(404).json({ error: "not found" }));
   app.use("/api", api);
 
@@ -50,6 +52,9 @@ function createApp() {
     }
     if (err.type === "entity.parse.failed") {
       return res.status(400).json({ error: "request body is not valid JSON" });
+    }
+    if (err.type === "entity.too.large") {
+      return res.status(413).json({ error: "that upload is too large" });
     }
     if (err.code === "LIMIT_FILE_SIZE") {
       return res.status(400).json({ error: "image is too large (5 MB max)" });

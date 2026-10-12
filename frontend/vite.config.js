@@ -9,6 +9,9 @@ const backend = process.env.BACKEND_URL || "http://localhost:4001";
 export default defineConfig({
   plugins: [react()],
   server: {
+    // The screenshot scanner's pixel code lives in ../shared (the backend
+    // runs the same code for the phone's screen scans).
+    fs: { allow: [".."] },
     proxy: {
       "/api": backend,
       "/uploads": backend,

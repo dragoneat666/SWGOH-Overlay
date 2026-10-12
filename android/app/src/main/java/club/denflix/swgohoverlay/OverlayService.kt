@@ -65,6 +65,10 @@ class OverlayService : Service() {
 
     companion object {
         const val ACTION_STOP = "club.denflix.swgohoverlay.STOP"
+        const val ACTION_CAPTURE_GRANTED = "club.denflix.swgohoverlay.CAPTURE_GRANTED"
+        const val ACTION_CAPTURE_DENIED = "club.denflix.swgohoverlay.CAPTURE_DENIED"
+        const val EXTRA_RESULT_CODE = "result_code"
+        const val EXTRA_RESULT_DATA = "result_data"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "swgoh_overlay_service"
         private const val MATCH_DEBOUNCE_MS = 250L
@@ -115,6 +119,22 @@ class OverlayService : Service() {
     private var matchSeq = 0
     private val matchRunnable = Runnable { runMatch() }
 
+    // Screen scan ("Scan screen"): capture -> server reads the squads ->
+    // pick the squad (if several) -> identify unknown faces -> the squad
+    // becomes `selected` and the normal counters view takes over.
+    private var capturer: ScreenCapturer? = null
+    private var scanActive = false
+    private var scanAfterConsent = false
+    private var scanBusy: String? = null
+    private var scanError: String? = null
+    private var scanResult: ScanResult? = null
+    private var scanSquad: Int? = null
+    /** Faces identified on the phone during this scan: (squad, slot) -> unit id. */
+    private val scanTaught = mutableMapOf<Pair<Int, Int>, Int>()
+    /** The face the search box is currently answering "who is this?" for. */
+    private var identifying: Pair<Int, Int>? = null
+    private val faceBitmaps = mutableMapOf<String, android.graphics.Bitmap?>()
+
     // --- Lifecycle -----------------------------------------------------------
 
     override fun onCreate() {
@@ -134,8 +154,19 @@ class OverlayService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopSelf()
+        when (intent?.action) {
+            ACTION_STOP -> stopSelf()
+            ACTION_CAPTURE_GRANTED -> onCaptureGranted(
+                intent.getIntExtra(EXTRA_RESULT_CODE, 0),
+                if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
+                else @Suppress("DEPRECATION") intent.getParcelableExtra(EXTRA_RESULT_DATA),
+            )
+            ACTION_CAPTURE_DENIED -> {
+                scanAfterConsent = false
+                scanBusy = null
+                scanError = "Screen capture wasn't allowed. Scan screen needs it to read the enemy squads - or type them in above instead."
+                showPanel()
+            }
         }
         // Not sticky: if Android kills the overlay, reopen it from the app
         // rather than having a bubble pop back up on its own later.
@@ -148,6 +179,8 @@ class OverlayService : Service() {
         destroyed = true
         mainHandler.removeCallbacksAndMessages(null)
         executor.shutdownNow()
+        capturer?.release()
+        capturer = null
         if (panelShowing) panelView?.let { runCatching { windowManager.removeView(it) } }
         bubbleView?.let { runCatching { windowManager.removeView(it) } }
         super.onDestroy()
@@ -260,7 +293,9 @@ class OverlayService : Service() {
 
     // --- Notification --------------------------------------------------------
 
-    private fun startForegroundWithNotification() {
+    /** [capturing]: also declare screen capture (required while a
+     * MediaProjection is running). */
+    private fun startForegroundWithNotification(capturing: Boolean = false) {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, getString(R.string.notification_channel), NotificationManager.IMPORTANCE_LOW)
@@ -279,11 +314,171 @@ class OverlayService : Service() {
             .addAction(0, getString(R.string.stop_overlay), stop)
             .setOngoing(true)
             .build()
-        ServiceCompat.startForeground(
-            this, NOTIFICATION_ID, notification,
-            if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
-        )
+        var types = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
+        if (capturing) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, types)
     }
+
+    // --- Screen scan -------------------------------------------------------
+
+    private fun startScan() {
+        scanActive = true
+        scanBusy = null
+        scanError = null
+        scanResult = null
+        scanSquad = null
+        scanTaught.clear()
+        identifying = null
+        faceBitmaps.clear()
+        selected.clear()
+        if (::searchInput.isInitialized) searchInput.setText("")
+        if (capturer == null) {
+            // First scan this session: Android asks for screen-capture
+            // consent (CaptureConsentActivity), then onCaptureGranted scans.
+            scanAfterConsent = true
+            hidePanel()
+            startActivity(
+                Intent(this, CaptureConsentActivity::class.java)
+                    .addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK or
+                            Intent.FLAG_ACTIVITY_NO_ANIMATION
+                    )
+            )
+            return
+        }
+        captureAndScan()
+    }
+
+    private fun onCaptureGranted(resultCode: Int, data: Intent?) {
+        if (data == null) return
+        try {
+            // Screen capture must be part of the foreground service before
+            // the projection is created (Android 14+).
+            startForegroundWithNotification(capturing = true)
+            val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
+            val projection = manager.getMediaProjection(resultCode, data)
+            capturer = ScreenCapturer(projection) {
+                // Capture ended (screen locked, or stopped from the status bar).
+                capturer = null
+                if (!destroyed) runCatching { startForegroundWithNotification(capturing = false) }
+            }
+        } catch (e: Exception) {
+            scanError = "Couldn't start screen capture (${e.message ?: e.javaClass.simpleName})."
+            scanAfterConsent = false
+            showPanel()
+            return
+        }
+        if (scanAfterConsent) {
+            scanAfterConsent = false
+            captureAndScan()
+        }
+    }
+
+    private fun captureAndScan() {
+        val cap = capturer ?: return startScan()
+        // Hide the overlay so it isn't in the picture.
+        hidePanel()
+        bubbleView?.visibility = View.INVISIBLE
+        val (w, h) = screenSize()
+        cap.capture(w, h, resources.displayMetrics.densityDpi) { bitmap ->
+            bubbleView?.visibility = View.VISIBLE
+            scanActive = true
+            if (bitmap == null) {
+                scanError = "Couldn't capture the screen - try Scan again."
+                showPanel()
+                return@capture
+            }
+            scanBusy = "Reading the screen…"
+            showPanel()
+            runAsync({
+                val out = java.io.ByteArrayOutputStream()
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, out)
+                bitmap.recycle()
+                api.scanGac(out.toByteArray())
+            }) { result, err ->
+                scanBusy = null
+                if (result == null) {
+                    scanError = "Couldn't read the screen: ${errorText(err)}"
+                } else {
+                    scanResult = result
+                    if (result.squads.size == 1) scanSquad = 0
+                    finishScanIfReady()
+                }
+                render()
+            }
+        }
+    }
+
+    private fun scanUnitId(squad: Int, slot: Int): Int? =
+        scanTaught[squad to slot] ?: scanResult?.squads?.getOrNull(squad)?.slots?.getOrNull(slot)?.unitId
+
+    /** Once the chosen squad's faces are all known, hand it to the normal
+     * counters view (same as typing the units in). */
+    private fun finishScanIfReady() {
+        val result = scanResult ?: return
+        val index = scanSquad ?: return
+        val squad = result.squads.getOrNull(index) ?: return
+        val ids = squad.slots.indices.map { scanUnitId(index, it) }
+        if (ids.any { it == null }) return
+        val byId = units.associateBy { it.id }
+        selected.clear()
+        ids.distinct().forEach { id ->
+            selected.add(byId[id] ?: GameUnit(id!!, null, "Unit #$id", false))
+        }
+        lastAdded = null
+        scanActive = false
+        identifying = null
+        scheduleMatch(immediate = true)
+    }
+
+    private fun identifyScanFace(squad: Int, slot: Int, unit: GameUnit) {
+        val face = scanResult?.squads?.getOrNull(squad)?.slots?.getOrNull(slot) ?: return
+        runAsync({ api.addFace(unit.id, face.image, face.fingerprintJson) }) { _, err ->
+            if (err != null) {
+                Toast.makeText(this, "Couldn't save that: ${errorText(err)}", Toast.LENGTH_LONG).show()
+                return@runAsync
+            }
+            scanTaught[squad to slot] = unit.id
+            identifying = null
+            if (::searchInput.isInitialized) {
+                searchInput.setText("")
+                // In landscape the keyboard would cover the next face's buttons.
+                (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+                    .hideSoftInputFromWindow(searchInput.windowToken, 0)
+            }
+            Toast.makeText(this, "Saved - ${unit.name} will be recognized from now on", Toast.LENGTH_SHORT).show()
+            finishScanIfReady()
+            render()
+        }
+    }
+
+    private fun endScan() {
+        scanActive = false
+        identifying = null
+        scanResult = null
+        render()
+    }
+
+    private fun faceBitmap(dataUrl: String): android.graphics.Bitmap? = faceBitmaps.getOrPut(dataUrl) {
+        runCatching {
+            val bytes = android.util.Base64.decode(dataUrl.substringAfter("base64,"), android.util.Base64.DEFAULT)
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        }.getOrNull()
+    }
+
+    private fun faceView(dataUrl: String, sizeDp: Int) = android.widget.ImageView(ui).apply {
+        setImageBitmap(faceBitmap(dataUrl))
+        scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+        layoutParams = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp)).apply { marginEnd = dp(4) }
+        clipToOutline = true
+        outlineProvider = object : android.view.ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: android.graphics.Outline) {
+                outline.setOval(0, 0, view.width, view.height)
+            }
+        }
+    }
+
+    private fun unitName(id: Int?): String = if (id == null) "?" else units.firstOrNull { it.id == id }?.name ?: "Unit #$id"
 
     // --- Geometry ------------------------------------------------------------
 
@@ -481,7 +676,7 @@ class OverlayService : Service() {
                 event?.keyCode == android.view.KeyEvent.KEYCODE_ENTER &&
                 event.action == android.view.KeyEvent.ACTION_DOWN
             if (actionId == EditorInfo.IME_ACTION_DONE || enterKey) {
-                currentSearchResults().firstOrNull()?.let { addUnit(it) }
+                currentSearchResults().firstOrNull()?.let { pickFromSearch(it) }
                 true
             } else {
                 false
@@ -496,6 +691,12 @@ class OverlayService : Service() {
         if (::searchInput.isInitialized) searchInput.setText("")
         query = ""
         scheduleMatch()
+    }
+
+    /** A search result was tapped (or picked with the keyboard). */
+    private fun pickFromSearch(unit: GameUnit) {
+        val target = identifying
+        if (target != null) identifyScanFace(target.first, target.second, unit) else addUnit(unit)
     }
 
     private fun addUnit(unit: GameUnit) {
@@ -524,6 +725,7 @@ class OverlayService : Service() {
         contentList.removeAllViews()
         when {
             query.isNotBlank() -> renderSearchResults()
+            scanActive -> renderScan()
             selected.isNotEmpty() -> renderMatches()
             else -> renderHome()
         }
@@ -533,6 +735,8 @@ class OverlayService : Service() {
      * a landscape screen), so it doubles as the "what will ✓ do" readout. */
     private fun renderTitle() {
         val (label, color) = when {
+            identifying != null && query.isBlank() -> "Who is this? Type a name" to R.color.accent
+            scanActive && query.isBlank() -> "Screen scan" to R.color.accent
             query.isNotBlank() -> {
                 val top = currentSearchResults().firstOrNull()
                 if (top != null) "✓ ${top.name}" to R.color.text else "No match" to R.color.danger
@@ -591,13 +795,14 @@ class OverlayService : Service() {
             addMessage("No $kind match \"${query.trim()}\".")
             return
         }
-        if (selected.isEmpty()) addMessage("Tap the enemy leader first.", small = true)
+        if (identifying != null) addMessage("Tap who that face is.", small = true)
+        else if (selected.isEmpty()) addMessage("Tap the enemy leader first.", small = true)
         results.forEach { unit ->
             val row = row {
                 addView(text(unit.name, 15f, R.color.text), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
                 if (unit.isShip) addView(text("Ship", 12f, R.color.muted))
             }
-            row.setOnClickListener { addUnit(unit) }
+            row.setOnClickListener { pickFromSearch(unit) }
             contentList.addView(row)
         }
     }
@@ -702,14 +907,113 @@ class OverlayService : Service() {
         contentList.addView(row)
     }
 
+    private fun renderScan() {
+        scanBusy?.let {
+            addMessage(it)
+            return
+        }
+        val scanAgain = { addButton("Scan again", accent = false) { startScan() } }
+        scanError?.let {
+            addMessage(it)
+            scanAgain()
+            addButton("Close", accent = false) { endScan() }
+            return
+        }
+        val result = scanResult ?: return
+
+        if (result.squads.isEmpty()) {
+            addMessage(
+                if (result.beaten > 0) "Every squad on screen is already beaten."
+                else "No enemy squads found. Open an enemy territory (its list of squads) and scan again."
+            )
+            scanAgain()
+            addButton("Close", accent = false) { endScan() }
+            return
+        }
+
+        val chosen = scanSquad
+        if (chosen == null) {
+            addHeading("Which squad are you attacking?")
+            result.squads.forEachIndexed { i, squad ->
+                val row = LinearLayout(ui).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(8), dp(8), dp(8), dp(8))
+                    setBackgroundResource(R.drawable.row_bg)
+                    isClickable = true
+                }
+                val faces = LinearLayout(ui).apply { orientation = LinearLayout.HORIZONTAL }
+                squad.slots.forEach { faces.addView(faceView(it.image, 36)) }
+                row.addView(faces)
+                row.addView(text(squad.slots.indices.joinToString(", ") { unitName(scanUnitId(i, it)) }, 13f, R.color.muted))
+                row.setOnClickListener {
+                    scanSquad = i
+                    finishScanIfReady()
+                    render()
+                }
+                contentList.addView(row)
+            }
+            scanAgain()
+            return
+        }
+
+        val squad = result.squads[chosen]
+        val faces = LinearLayout(ui).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+        }
+        squad.slots.forEach { faces.addView(faceView(it.image, 40)) }
+        contentList.addView(faces)
+
+        val unknown = squad.slots.indices.filter { scanUnitId(chosen, it) == null }
+        addMessage(
+            if (unknown.size == 1) "1 face isn't recognized yet. Tell the app who it is once and it'll know from now on."
+            else "${unknown.size} faces aren't recognized yet. Tell the app who they are once and it'll know from now on.",
+            small = true,
+        )
+        unknown.forEach { k ->
+            val slot = squad.slots[k]
+            val block = LinearLayout(ui).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(dp(4), dp(10), dp(4), dp(6))
+                gravity = Gravity.TOP
+            }
+            block.addView(faceView(slot.image, 52))
+            val body = LinearLayout(ui).apply { orientation = LinearLayout.VERTICAL }
+            body.addView(text(if (identifying == chosen to k) "Type a name above…" else "Who is this?", 14f, R.color.text, bold = true))
+            slot.candidates.forEach { cand ->
+                val name = cand.name ?: unitName(cand.unitId)
+                body.addView(button("$name  ${(cand.score * 100).roundToInt()}%", accent = cand == slot.candidates.first()) {
+                    identifyScanFace(chosen, k, units.firstOrNull { it.id == cand.unitId } ?: GameUnit(cand.unitId, null, name, false))
+                }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(36)).apply { topMargin = dp(6) })
+            }
+            body.addView(button(if (slot.candidates.isEmpty()) "Search…" else "Someone else…", accent = false) {
+                identifying = chosen to k
+                searchInput.requestFocus()
+                (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(searchInput, 0)
+                render()
+            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(36)).apply { topMargin = dp(6) })
+            block.addView(body, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) })
+            contentList.addView(block)
+        }
+        if (result.squads.size > 1) {
+            addButton("Pick a different squad", accent = false) {
+                scanSquad = null
+                identifying = null
+                render()
+            }
+        }
+        scanAgain()
+    }
+
     private fun renderHome() {
         if (!prefs.isConfigured()) {
             addMessage("Open the SWGOH Overlay app's Settings and enter your server URL, token and ally code.")
         }
+        addButton("Scan screen", accent = true) { startScan() }
         if (units.isEmpty()) {
             addMessage(unitsError?.let { "Couldn't load units: $it" } ?: "Loading units…")
         } else {
-            addMessage("Type an enemy unit above to find counters.", small = true)
+            addMessage("Open an enemy territory in GAC and scan it - or type the enemy units above.", small = true)
         }
 
         val rosterRow = row {

@@ -6,9 +6,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { detectRows } from "./layout.js";
-import { fingerprint, similarity, identify, groupFaces, SAME_FACE } from "./faces.js";
-import { prepareNumberImage, parseCount, parsePercent, parseBanners } from "./numbers.js";
+import { detectRows } from "./layout.mjs";
+import { fingerprint, similarity, identify, groupFaces, SAME_FACE } from "./faces.mjs";
+import { prepareNumberImage, parseCount, parsePercent, parseBanners } from "./numbers.mjs";
 
 const PAGE = [5, 14, 34];
 const BUBBLE = [21, 33, 59];
@@ -139,7 +139,9 @@ test("parses what the OCR reads", () => {
 // Optional: a real swgoh.gg screenshot kept outside the repo.
 const sample = process.env.SAMPLE_SCREENSHOT;
 test("real screenshot (SAMPLE_SCREENSHOT)", { skip: !sample || !existsSync(sample) }, () => {
-  const require = createRequire(import.meta.url);
+  // pngjs lives in the frontend (or backend) node_modules - resolve it from
+  // wherever the tests are run.
+  const require = createRequire(process.cwd() + "/package.json");
   const { PNG } = require("pngjs");
   const img = PNG.sync.read(readFileSync(sample));
   const rows = detectRows(img);

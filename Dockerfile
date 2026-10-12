@@ -7,6 +7,9 @@ WORKDIR /web
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
+# Screenshot-scanner pixel code shared with the backend; the frontend
+# imports it as ../shared (i.e. /shared from /web).
+COPY shared /shared
 RUN npm run build
 
 # 2. Backend runtime
@@ -18,6 +21,8 @@ COPY backend/package.json backend/package-lock.json ./
 RUN npm ci --omit=dev
 
 COPY backend/src ./src
+# Same scanner code, for the phone's screen scans (src/routes/scan.js).
+COPY shared ./shared
 # The backend creates the tables from this itself if the database is empty
 # (see src/migrate.js), so the Postgres container doesn't need it mounted.
 COPY db/init.sql ./db/init.sql

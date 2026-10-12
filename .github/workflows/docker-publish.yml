@@ -7,6 +7,7 @@ on:
       - "backend/**"
       - "frontend/**"
       - "db/**"
+      - "shared/**"
       - "Dockerfile"
       - ".dockerignore"
       - ".github/workflows/docker-publish.yml"
@@ -15,6 +16,7 @@ on:
       - "backend/**"
       - "frontend/**"
       - "db/**"
+      - "shared/**"
       - "Dockerfile"
   workflow_dispatch: {}
 

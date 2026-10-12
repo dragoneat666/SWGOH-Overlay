@@ -1,7 +1,10 @@
 package club.denflix.swgohoverlay
 
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -23,31 +26,47 @@ class ApiClient(private val prefs: Prefs) {
         .readTimeout(45, TimeUnit.SECONDS)
         .build()
 
-    private fun get(path: String): String {
+    private fun get(path: String): String = send(path, null)
+
+    private fun send(path: String, body: RequestBody?): String {
         val base = prefs.apiBaseUrl
         if (base.isBlank()) throw ApiException("Set the backend URL in Settings first.")
         val request = try {
             Request.Builder()
                 .url("$base$path")
                 .addHeader("Authorization", "Bearer ${prefs.apiToken}")
-                .get()
+                .apply { if (body == null) get() else post(body) }
                 .build()
         } catch (e: IllegalArgumentException) {
             throw ApiException("Backend URL isn't valid - it should look like http://100.x.x.x:4001")
         }
         try {
             client.newCall(request).execute().use { resp ->
-                val body = resp.body?.string() ?: ""
+                val text = resp.body?.string() ?: ""
                 if (resp.code == 401) throw ApiException("The server rejected the API token.")
                 if (!resp.isSuccessful) {
-                    val msg = runCatching { JSONObject(body).optString("error") }.getOrNull()
+                    val msg = runCatching { JSONObject(text).optString("error") }.getOrNull()
                     throw ApiException("Server error ${resp.code}${if (msg.isNullOrBlank()) "" else ": $msg"}")
                 }
-                return body
+                return text
             }
         } catch (e: IOException) {
             throw ApiException("Can't reach the server at $base (${e.message ?: e.javaClass.simpleName})")
         }
+    }
+
+    /** POST /api/scan/gac - the server reads the enemy squads off a screenshot. */
+    fun scanGac(jpeg: ByteArray): ScanResult =
+        ApiJson.parseScan(JSONObject(send("/api/scan/gac", jpeg.toRequestBody("image/jpeg".toMediaType()))))
+
+    /** POST /api/portraits - "this face is that unit" (taught from a scan). */
+    fun addFace(unitId: Int, imageDataUrl: String, fingerprintJson: String) {
+        val body = JSONObject()
+            .put("unit_id", unitId)
+            .put("image", imageDataUrl)
+            .put("fingerprint", JSONArray(fingerprintJson))
+            .put("source", "gac screen")
+        send("/api/portraits", body.toString().toRequestBody("application/json".toMediaType()))
     }
 
     /** GET /api/auth/check - true if the URL + token work. */

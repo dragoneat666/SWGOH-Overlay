@@ -35,21 +35,16 @@ What's real and working:
 - Counters ranked automatically from battle stats (win rate, sample size,
   average banners)
 - docker-compose stack: Postgres + api (+ web UI) + Comlink
-- Android overlay app, manual mode: floating bubble, type the enemy team
-  (names or initials), best-match counters from the server filtered by your
-  roster and by units already used this round
+- Android overlay app: floating bubble, type the enemy team (names or
+  initials) or **Scan screen** to read it off the GAC map, best-match counters
+  from the server filtered by your roster and by units already used this round
 
 What's **stubbed / not yet built**:
 
 - The Android app has only been tested on an emulator (Android 16) against a
   local backend, not yet on a real phone with the game running
-- The icon-matching engine itself (perceptual-hash comparison of cropped
-  portraits against the units library) — `IconMatcher.kt` has the interface
-  and a TODO where the real comparison goes
-- Screen capture (MediaProjection) wiring to actually grab a screenshot from
-  within the overlay service
-- Screen reading in the overlay (the face library it needs now builds up
-  from screenshot imports)
+- Screen reading covers the GAC character map (opponent's defense squads);
+  fleets and other game modes aren't read yet
 
 ## Deploying (Dockge, published image)
 
@@ -168,6 +163,18 @@ In game (manual mode):
 
 Picks reset automatically if the panel has been closed for 90+ seconds.
 
+Scanning the screen (GAC map, with the opponent's defense squads showing):
+
+1. Open the panel → **Scan screen**. The first time per overlay session,
+   Android asks to "Start recording or casting" - that's the app taking a
+   one-off picture of the screen; nothing is recorded or kept on the phone.
+2. Lit squads are read (darkened ones are already beaten and skipped). If
+   two are on screen it asks which one you're attacking.
+3. Faces it doesn't know yet show with its best guesses - tap the right one,
+   or **Someone else…** to search. Each answer is saved to the face library,
+   so the next scan knows that face.
+4. Once every face is known you get the counters, exactly as in manual mode.
+
 ## Repo layout
 
 ```
@@ -186,7 +193,9 @@ SWGOH-Overlay/
 │       ├── comlinkClient.js / unitImport.js
 │       ├── squadHelpers.js
 │       ├── middleware/auth.js
-│       └── routes/ (units, counters, roster)
+│       ├── counterQueries.js  # counter lookups shared by routes
+│       └── routes/ (units, counters, portraits, scan, roster)
+├── shared/scan/               # pixel code used by the web UI and the API
 ├── frontend/
 │   ├── public/                # manifest + icons (home-screen install)
 │   └── src/ (pages, components)

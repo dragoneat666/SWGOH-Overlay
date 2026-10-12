@@ -2,9 +2,9 @@
 // The pixel work lives in layout.js / faces.js / numbers.js (pure, tested
 // in Node); this file adds the canvas and OCR (tesseract.js) bits.
 import { createWorker, PSM } from "tesseract.js";
-import { detectRows } from "./layout.js";
-import { fingerprint } from "./faces.js";
-import { prepareNumberImage, NUMBER_CHARS, parseCount, parsePercent, parseBanners } from "./numbers.js";
+import { detectRows } from "../../../shared/scan/layout.mjs";
+import { fingerprint } from "../../../shared/scan/faces.mjs";
+import { prepareNumberImage, NUMBER_CHARS, parseCount, parsePercent, parseBanners } from "../../../shared/scan/numbers.mjs";
 
 const FACE_IMAGE_SIZE = 72;
 
