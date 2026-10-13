@@ -411,7 +411,7 @@ router.get("/lookup", asyncHandler(async (req, res) => {
 // leader matches. A single unit id works too: "show me every team led by X".
 router.get("/match", asyncHandler(async (req, res) => {
   const unitIds = parseUnitIdQuery(req.query.unit_ids, "unit_ids");
-  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 5, 1), 20);
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 5, 1), 50);
 
   res.json({ matches: await matchDefense(unitIds, limit) });
 }));

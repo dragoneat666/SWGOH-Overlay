@@ -13,6 +13,8 @@ data class GameUnit(
     val definitionId: String?,
     val name: String,
     val isShip: Boolean,
+    /** The unit's picture under the server's /uploads/, if it has one. */
+    val imagePath: String? = null,
 )
 
 /** Ordered squad - index 0 is the leader. */
@@ -93,6 +95,7 @@ object ApiJson {
         definitionId = o.optStringOrNull("definition_id"),
         name = o.optString("name", "Unknown unit"),
         isShip = o.optBoolean("is_ship", false),
+        imagePath = o.optStringOrNull("image_path"),
     )
 
     fun parseUnits(arr: JSONArray): List<GameUnit> =

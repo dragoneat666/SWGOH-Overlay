@@ -30,6 +30,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.view.ViewGroup
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -73,6 +74,10 @@ class OverlayService : Service() {
         private const val CHANNEL_ID = "swgoh_overlay_service"
         private const val MATCH_DEBOUNCE_MS = 250L
         private const val STALE_SELECTION_MS = 90_000L
+        /** Close teams listed at first, and added per "Load more teams". */
+        private const val TEAMS_PER_PAGE = 5
+        /** Close teams asked from the server (it sorts them, closest first). */
+        private const val MATCH_LIMIT = 40
     }
 
     private lateinit var windowManager: WindowManager
@@ -110,8 +115,15 @@ class OverlayService : Service() {
      * unit is still the selected leader. */
     private data class ScannedLeader(val unitId: Int, val relic: Int?)
     private var scannedLeader: ScannedLeader? = null
-    /** Whether the "Probably too weak" counters are expanded. */
-    private var showWeak = false
+    /** Faces captured by the last scan, by unit id (shown for the enemy team). */
+    private var scannedFaces: Map<Int, String> = emptyMap()
+    /** Whether the set-aside counters (too weak, used, ...) are expanded. */
+    private var showSetAside = false
+    /** How many close teams are listed (grows with "Load more teams"). */
+    private var teamsShown = TEAMS_PER_PAGE
+    /** Teams/squads whose unit names are dropped down ("team:id", "squad:id"). */
+    private val expanded = mutableSetOf<String>()
+    private lateinit var pictures: UnitPictures
     private var rosterLoading = false
     /** Why the last roster pull didn't give a fresh roster (null = it did). */
     private var rosterError: String? = null
@@ -127,7 +139,6 @@ class OverlayService : Service() {
 
     private var matches: List<TeamMatch>? = null
     private var matchError: String? = null
-    private var focusedMatch = 0
     private var matchSeq = 0
     private val matchRunnable = Runnable { runMatch() }
 
@@ -156,6 +167,7 @@ class OverlayService : Service() {
         api = ApiClient(prefs)
         ui = ContextThemeWrapper(this, R.style.Theme_SWGOHOverlay)
         executor = Executors.newFixedThreadPool(3)
+        pictures = UnitPictures(this, prefs, executor)
         startForegroundWithNotification()
 
         loadCachedUnits()
@@ -311,7 +323,9 @@ class OverlayService : Service() {
         matchSeq++
         matches = null
         matchError = null
-        focusedMatch = 0
+        teamsShown = TEAMS_PER_PAGE
+        expanded.clear()
+        showSetAside = false
         mainHandler.removeCallbacks(matchRunnable)
         if (selected.isNotEmpty()) {
             mainHandler.postDelayed(matchRunnable, if (immediate) 0 else MATCH_DEBOUNCE_MS)
@@ -322,7 +336,7 @@ class OverlayService : Service() {
     private fun runMatch() {
         val seq = matchSeq
         val ids = selected.map { it.id }
-        runAsync({ api.match(ids) }) { result, err ->
+        runAsync({ api.match(ids, MATCH_LIMIT) }) { result, err ->
             if (seq != matchSeq) return@runAsync // selection changed since
             matches = result ?: emptyList()
             matchError = if (result == null) errorText(err) else null
@@ -370,7 +384,7 @@ class OverlayService : Service() {
         identifying = null
         faceBitmaps.clear()
         scannedLeader = null
-        showWeak = false
+        scannedFaces = emptyMap()
         selected.clear()
         if (::searchInput.isInitialized) searchInput.setText("")
         if (capturer == null) {
@@ -470,7 +484,7 @@ class OverlayService : Service() {
         scanActive = false
         identifying = null
         scannedLeader = ScannedLeader(ids[0]!!, squad.slots[0].relic)
-        showWeak = false
+        scannedFaces = squad.slots.indices.associate { ids[it]!! to squad.slots[it].image }
         scheduleMatch(immediate = true)
     }
 
@@ -744,7 +758,7 @@ class OverlayService : Service() {
     private fun clearSelection() {
         selected.clear()
         scannedLeader = null
-        showWeak = false
+        scannedFaces = emptyMap()
         lastAdded = null
         if (::searchInput.isInitialized) searchInput.setText("")
         query = ""
@@ -778,6 +792,12 @@ class OverlayService : Service() {
 
         renderChips()
         renderTitle()
+        val hideSearch = teamIsSet()
+        if (hideSearch && searchInput.visibility == View.VISIBLE) {
+            (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+                .hideSoftInputFromWindow(searchInput.windowToken, 0)
+        }
+        searchInput.visibility = if (hideSearch) View.GONE else View.VISIBLE
         btnClear.visibility = if (selected.isNotEmpty() || query.isNotBlank()) View.VISIBLE else View.GONE
 
         contentList.removeAllViews()
@@ -810,16 +830,19 @@ class OverlayService : Service() {
         btnStop.visibility = if (query.isBlank() && selected.isEmpty()) View.VISIBLE else View.GONE
     }
 
+    /** The enemy team is complete: it came from a scan, or 5 units are
+     * picked. Then the search box goes away (Clear starts over). */
+    private fun teamIsSet(): Boolean {
+        if (selected.isEmpty() || query.isNotBlank() || scanActive) return false
+        return selected.size >= 5 || scannedLeader?.unitId == selected.first().id
+    }
+
+    /** The picked enemy units as faces: tap to remove, long-press to make leader. */
     private fun renderChips() {
         selectedChips.removeAllViews()
         selectedChips.visibility = if (selected.isEmpty()) View.GONE else View.VISIBLE
         selected.forEachIndexed { i, unit ->
-            val chip = text(
-                if (i == 0) "★ ${unit.name}  ✕" else "${unit.name}  ✕",
-                14f, if (i == 0) R.color.accent else R.color.text,
-            ).apply {
-                setBackgroundResource(if (i == 0) R.drawable.chip_leader_bg else R.drawable.chip_bg)
-                setPadding(dp(12), dp(6), dp(10), dp(6))
+            val face = unitFace(unit, 40, leader = i == 0, scanImage = scannedFaces[unit.id]).apply {
                 contentDescription = if (i == 0) "Leader ${unit.name}, tap to remove" else "${unit.name}, tap to remove, long-press to make leader"
                 setOnClickListener {
                     selected.removeAt(i)
@@ -832,9 +855,64 @@ class OverlayService : Service() {
                     true
                 }
             }
-            selectedChips.addView(chip, ViewGroup.MarginLayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ))
+            selectedChips.addView(face, ViewGroup.MarginLayoutParams(dp(40), dp(40)))
+        }
+    }
+
+    /** A unit's face in a circle (its picture, the scan's crop, or its initials). */
+    private fun unitFace(unit: GameUnit, sizeDp: Int, leader: Boolean = false, scanImage: String? = null): FrameLayout {
+        val frame = FrameLayout(ui).apply {
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(ContextCompat.getColor(ui, R.color.surface2))
+                setStroke(dp(if (leader) 2 else 1), ContextCompat.getColor(ui, if (leader) R.color.accent else R.color.border))
+            }
+            clipToOutline = true
+            outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: android.graphics.Outline) {
+                    outline.setOval(0, 0, view.width, view.height)
+                }
+            }
+            contentDescription = unit.name
+        }
+        val initials = text(initialsOf(unit.name), sizeDp * 0.3f, R.color.text, bold = true).apply { gravity = Gravity.CENTER }
+        frame.addView(initials, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        val image = android.widget.ImageView(ui).apply {
+            scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+            // Pictures include the ring around the portrait - zoom in on the face.
+            scaleX = 1.3f
+            scaleY = 1.3f
+        }
+        frame.addView(image, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        // The leader's ring stays visible on top of the picture.
+        if (leader) frame.foreground = android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.OVAL
+            setStroke(dp(2), ContextCompat.getColor(ui, R.color.accent))
+        }
+        fun show(bitmap: android.graphics.Bitmap) {
+            image.setImageBitmap(bitmap)
+            initials.visibility = View.INVISIBLE
+        }
+        val now = scanImage?.let { faceBitmap(it) } ?: unit.imagePath?.let { pictures.cached(it) }
+        if (now != null) {
+            show(now)
+        } else unit.imagePath?.let { path ->
+            image.tag = path
+            pictures.load(path) { bitmap -> if (bitmap != null && image.tag == path) show(bitmap) }
+        }
+        return frame
+    }
+
+    private fun initialsOf(name: String): String =
+        name.split(' ', '-', '(').filter { it.isNotBlank() && it[0].isLetterOrDigit() }.take(3)
+            .joinToString("") { it.first().uppercase() }
+
+    /** A squad as a row of faces, leader first. */
+    private fun faceRow(units: List<GameUnit>, sizeDp: Int) = LinearLayout(ui).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        units.forEachIndexed { i, u ->
+            addView(unitFace(u, sizeDp, leader = i == 0), LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp)).apply { marginEnd = dp(4) })
         }
     }
 
@@ -866,7 +944,7 @@ class OverlayService : Service() {
     }
 
     private fun renderMatches() {
-        addMessage("Tap a unit above to remove it · long-press to make it the leader.", small = true)
+        if (!teamIsSet()) addMessage("Tap a face above to remove it · long-press to make it the leader.", small = true)
 
         val err = matchError
         val found = matches
@@ -884,105 +962,116 @@ class OverlayService : Service() {
             return
         }
 
-        val match = found[focusedMatch.coerceIn(0, found.size - 1)]
-        val defender = match.defender
-        val leaderName = defender.leader?.name ?: "Unknown"
-        addHeading("vs $leaderName")
-        addMessage(
-            if (match.exact) "Exact team · ${defender.label}"
-            else "${(match.score * 100).roundToInt()}% match - ${match.overlap} of its ${defender.units.size} units · ${defender.label}",
-            small = true,
-        )
-        match.counters.mapNotNull { it.notes }.forEach { addNotes(it) }
-
         // The enemy leader's relic level - only known from a screen scan, and
         // only while the scanned leader is still the one selected.
         val scanned = scannedLeader?.takeIf { it.unitId == selected.firstOrNull()?.id }
         val theirRelic = scanned?.relic
         if (scanned != null) {
             addMessage(
-                if (theirRelic != null) "Their leader: R$theirRelic · counters with a leader more than ${CounterRanking.MAX_RELIC_GAP} relic levels below are set aside."
-                else "Their leader's relic level couldn't be read - nothing is set aside.",
+                if (theirRelic != null) "Their leader: R$theirRelic · counters whose leader is more than ${CounterRanking.MAX_RELIC_GAP} relic levels below are set aside."
+                else "Their leader's relic level couldn't be read - no counters set aside for it.",
                 small = true,
             )
         }
 
-        val ranked = CounterRanking.rank(match.counters, owned, prefs.getUsedSquads(), levels, theirRelic)
-        if (ranked.isEmpty()) addMessage("No counters saved for this team.")
-        val (weak, shown) = ranked.partition { it.availability == CounterRanking.Availability.TOO_WEAK }
-        shown.forEach { addCounterRow(it, theirRelic) }
-        if (weak.isNotEmpty()) {
-            val toggle = row {
-                addView(
-                    text("Probably too weak (${weak.size})", 14f, R.color.muted, bold = true),
-                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
-                )
-                addView(text(if (showWeak) "Hide" else "Show", 13f, R.color.link))
-            }
-            toggle.setOnClickListener {
-                showWeak = !showWeak
+        val board = CounterBoard.build(found, selected.size, owned, prefs.getUsedSquads(), levels, theirRelic)
+        if (board.teams.isEmpty()) {
+            addMessage(
+                if (board.setAside.isEmpty()) "No counters saved for teams like this one yet."
+                else "Nothing you can use against teams like this right now - see what's set aside below."
+            )
+        }
+        board.teams.take(teamsShown).forEach { team ->
+            addTeamHeader(team.match)
+            team.match.counters.mapNotNull { it.notes }.forEach { addNotes(it) }
+            team.counters.forEach { addCounterRow(it, theirRelic) }
+        }
+        val more = board.teams.size - teamsShown
+        if (more > 0) {
+            val n = min(more, TEAMS_PER_PAGE)
+            addButton("Load $n more team${if (n == 1) "" else "s"}", accent = false) {
+                teamsShown += n
                 render()
             }
-            contentList.addView(toggle)
-            if (showWeak) weak.forEach { addCounterRow(it, theirRelic) }
         }
 
-        val others = found.withIndex().filter { it.index != focusedMatch }
-        if (others.isNotEmpty()) {
-            addSection("Other close teams")
-            others.forEach { (index, other) ->
-                val row = row {
-                    addView(
-                        text(other.defender.leader?.name ?: "Unknown", 15f, R.color.text),
-                        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
-                    )
-                    addView(text(if (other.exact) "exact" else "${(other.score * 100).roundToInt()}%", 13f, R.color.muted))
-                }
-                row.setOnClickListener {
-                    focusedMatch = index
-                    render()
-                    contentScroll.scrollTo(0, 0)
-                }
-                contentList.addView(row)
+        // Last: everything you can't use right now, folded away.
+        if (board.setAside.isNotEmpty()) {
+            val toggle = row {
+                addView(
+                    text("Set aside (${board.setAside.size})", 14f, R.color.muted, bold = true),
+                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+                )
+                addView(text(if (showSetAside) "Hide" else "Show", 13f, R.color.link))
+            }
+            toggle.setOnClickListener {
+                showSetAside = !showSetAside
+                render()
+            }
+            contentList.addView(toggle, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(12) })
+            if (showSetAside) {
+                addMessage("Probably too weak, already used, missing units, or under ${CounterRanking.MIN_WIN_RATE.toInt()}% win.", small = true)
+                board.setAside.forEach { addCounterRow(it.ranked, theirRelic) }
             }
         }
     }
 
+    /** A close team: its faces, how close it is, and (tapped) its unit names. */
+    private fun addTeamHeader(m: TeamMatch) {
+        val key = "team:${m.defender.id}"
+        val header = row {
+            addView(text("vs", 13f, R.color.muted).apply { setPadding(0, 0, dp(6), 0) })
+            addView(faceRow(m.defender.units, 26), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(text(if (m.exact) "exact" else "${(m.score * 100).roundToInt()}%", 13f, if (m.exact) R.color.accent else R.color.muted, bold = m.exact))
+            addView(text(if (key in expanded) "  ▴" else "  ▾", 15f, R.color.link))
+        }
+        header.setOnClickListener {
+            if (!expanded.remove(key)) expanded += key
+            render()
+        }
+        contentList.addView(header, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(10) })
+        if (key in expanded) addMessage(m.defender.label, small = true)
+    }
+
     private fun addCounterRow(r: CounterRanking.Ranked, theirRelic: Int? = null) {
         val squad = r.counter.squad
+        val key = "squad:${squad.id}"
         val row = LinearLayout(ui).apply {
             orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4), dp(8), dp(4), dp(8))
-            alpha = if (r.usable) 1f else 0.5f
+            alpha = if (r.usable) 1f else 0.6f
+            setOnClickListener {
+                if (!expanded.remove(key)) expanded += key
+                render()
+            }
         }
-        row.addView(text("#${r.counter.rank}", 15f, R.color.accent, bold = true).apply {
-            minWidth = dp(32)
-        })
 
         val body = LinearLayout(ui).apply { orientation = LinearLayout.VERTICAL }
-        val names = SpannableStringBuilder()
-        squad.units.forEachIndexed { i, u ->
-            if (i > 0) names.append(", ")
-            val start = names.length
-            names.append(u.name)
-            if (i == 0) names.setSpan(StyleSpan(Typeface.BOLD), start, names.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        val faces = LinearLayout(ui).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(faceRow(squad.units, 32))
+            addView(text(if (key in expanded) " ▴" else " ▾", 15f, R.color.link))
         }
-        body.addView(text(names, 15f, R.color.text))
+        body.addView(faces)
+        if (key in expanded) body.addView(text(squad.label, 14f, R.color.text).apply { setPadding(0, dp(4), 0, 0) })
         val stats = listOfNotNull(r.counter.statsLabel, r.leaderLevel?.label?.let { "your lead $it" })
         if (stats.isNotEmpty()) body.addView(text(stats.joinToString(" · "), 13f, R.color.muted))
         r.counter.notes?.let { body.addView(text(it, 13f, R.color.muted, italic = true)) }
-        when (r.availability) {
-            CounterRanking.Availability.ALREADY_USED ->
-                body.addView(text("Already used: ${r.blockers.joinToString { it.name }}", 13f, R.color.danger))
-            CounterRanking.Availability.NOT_OWNED ->
-                body.addView(text("Not in your roster: ${r.blockers.joinToString { it.name }}", 13f, R.color.danger))
+        val reason = when (r.availability) {
+            CounterRanking.Availability.ALREADY_USED -> "Already used: ${r.blockers.joinToString { it.name }}"
+            CounterRanking.Availability.NOT_OWNED -> "Not in your roster: ${r.blockers.joinToString { it.name }}"
             CounterRanking.Availability.TOO_WEAK ->
-                body.addView(text(
-                    "Probably too weak: your ${r.blockers.firstOrNull()?.name ?: "leader"} ${r.leaderLevel?.label ?: ""} vs their R${theirRelic ?: "?"}",
-                    13f, R.color.danger,
-                ))
-            CounterRanking.Availability.AVAILABLE -> Unit
+                "Probably too weak: your ${r.blockers.firstOrNull()?.name ?: "leader"} ${r.leaderLevel?.label ?: ""} vs their R${theirRelic ?: "?"}"
+            CounterRanking.Availability.LOW_WIN_RATE -> "Low win rate"
+            CounterRanking.Availability.AVAILABLE -> null
         }
+        reason?.let { body.addView(text(it, 13f, R.color.danger)) }
         row.addView(body, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
         if (r.usable) {

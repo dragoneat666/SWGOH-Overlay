@@ -158,9 +158,14 @@ In game (manual mode):
    The title bar shows which unit ✓ will add, since in landscape the
    keyboard covers the list. Keep typing more members; close the keyboard to
    see counters.
-3. The closest saved defense team is shown with its counters, best first.
-   Counters needing a unit you don't own, or a unit you already attacked
-   with this round, are dimmed with the reason.
+3. The closest saved defense teams are listed one after another (same
+   leader, 3+ units in common), each as a row of faces with its counters
+   below it - tap a row's ▾ for the unit names. The 5 closest with something
+   you can use come first; **Load more teams** adds the rest. Each counter
+   squad is listed once, under the closest team it was recorded against.
+   Counters you can't use - a unit you don't own or already attacked with
+   this round, probably too weak, or under 50% win - are folded into
+   **Set aside** at the bottom, with the reason.
 4. **Use** marks that squad used for the round (every unit in it). The panel's
    home view lists used squads, with **Reset round**.
 

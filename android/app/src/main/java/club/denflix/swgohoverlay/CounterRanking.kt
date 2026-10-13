@@ -13,6 +13,8 @@ package club.denflix.swgohoverlay
  *   a counter whose leader is more than MAX_RELIC_GAP levels below it is
  *   "probably too weak" - the leader's kit usually carries the matchup, so
  *   that's where your build matters most. Unknown levels hide nothing.
+ * - A counter recorded with a win rate under MIN_WIN_RATE is out too: it's
+ *   an attack people tried that mostly failed.
  *
  * Usable counters come first in their original rank order; then used/not
  * owned ones, then probably-too-weak ones - each in rank order, with the
@@ -23,7 +25,10 @@ object CounterRanking {
     /** How many relic levels your leader may be below theirs. */
     const val MAX_RELIC_GAP = 2
 
-    enum class Availability { AVAILABLE, ALREADY_USED, NOT_OWNED, TOO_WEAK }
+    /** Recorded win rates (%) below this aren't recommended. */
+    const val MIN_WIN_RATE = 50.0
+
+    enum class Availability { AVAILABLE, ALREADY_USED, NOT_OWNED, TOO_WEAK, LOW_WIN_RATE }
 
     data class Ranked(
         val counter: CounterSquad,
@@ -69,11 +74,10 @@ object CounterRanking {
                 usedUnits.isNotEmpty() -> Ranked(c, Availability.ALREADY_USED, usedUnits, leaderLevel)
                 missing.isNotEmpty() -> Ranked(c, Availability.NOT_OWNED, missing, leaderLevel)
                 tooWeak(leaderLevel, opponentLeaderRelic) -> Ranked(c, Availability.TOO_WEAK, listOfNotNull(leader), leaderLevel)
+                (c.winRate ?: 100.0) < MIN_WIN_RATE -> Ranked(c, Availability.LOW_WIN_RATE, emptyList(), leaderLevel)
                 else -> Ranked(c, Availability.AVAILABLE, emptyList(), leaderLevel)
             }
         }
-        return ranked.filter { it.usable } +
-            ranked.filter { !it.usable && it.availability != Availability.TOO_WEAK } +
-            ranked.filter { it.availability == Availability.TOO_WEAK }
+        return ranked.filter { it.usable } + ranked.filterNot { it.usable }
     }
 }

@@ -155,6 +155,15 @@ ally code) and against squads you've already committed to this GAC round.
   picture - stretched to twice its width, since the game's tall narrow
   digits otherwise read wrong (5 as 9, 7 as 1) - and backend/src/badgeReader.js
   reads it with tesseract.js. No white digits = no relic number = unknown.
+- The overlay's counters view (CounterBoard.kt) lists the close saved
+  defense teams in order - same leader, 3+ units in common, like the
+  offense search - because a team's last slots vary and counters recorded
+  against a variant usually work on yours. Teams with nothing usable are
+  skipped, 5 are shown, more on request; a counter squad appears once, under
+  the closest team. Everything unusable (used, not owned, too weak, under 50%
+  win) is collected in a folded "Set aside" group at the very bottom.
+  Squads are shown as faces (unit pictures from /uploads, cached on the
+  phone; initials when a unit has none), names on tap.
 - "Probably too weak": counters only differ in how well *your* copy is
   built, and the leader's kit usually carries a matchup, so the overlay
   compares leaders on one scale (gear 1-13, then R1-R10 on top). A counter
