@@ -148,6 +148,19 @@ ally code) and against squads you've already committed to this GAC round.
   game face is stored and matches ~1.0 from then on.
 - When every face of a squad is known the API includes the best-match
   defense teams (`matchDefense`), so the overlay shows counters right away.
+- Relic levels: the badge under each portrait shows the relic level in
+  white on blue (light side), red (dark side) or gold (Galactic Legend with
+  its ultimate); units without relics show their level (85) in pale grey
+  instead. shared/scan/badges.mjs turns the number into a clean dark-on-white
+  picture - stretched to twice its width, since the game's tall narrow
+  digits otherwise read wrong (5 as 9, 7 as 1) - and backend/src/badgeReader.js
+  reads it with tesseract.js. No white digits = no relic number = unknown.
+- "Probably too weak": counters only differ in how well *your* copy is
+  built, and the leader's kit usually carries a matchup, so the overlay
+  compares leaders on one scale (gear 1-13, then R1-R10 on top). A counter
+  whose leader is more than 2 levels below the enemy leader (R4 vs R7, or any
+  non-relic leader vs R3+) is set aside in a collapsed section - never
+  removed. Unknown levels (typed-in teams, unreadable badges) set nothing aside.
 
 ## Squad identity & matching
 

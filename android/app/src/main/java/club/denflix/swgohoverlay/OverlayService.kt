@@ -103,6 +103,15 @@ class OverlayService : Service() {
     private var units: List<GameUnit> = emptyList()
     private var unitsError: String? = null
     private var owned: Set<String>? = null
+    /** Your units' gear/relic (by game id), from the last roster pull. */
+    private var levels: Map<String, UnitLevel> = emptyMap()
+    /** The enemy leader of the squad picked from the last screen scan, and
+     * its relic level if the badge could be read. Only applies while that
+     * unit is still the selected leader. */
+    private data class ScannedLeader(val unitId: Int, val relic: Int?)
+    private var scannedLeader: ScannedLeader? = null
+    /** Whether the "Probably too weak" counters are expanded. */
+    private var showWeak = false
     private var rosterLoading = false
     /** Why the last roster pull didn't give a fresh roster (null = it did). */
     private var rosterError: String? = null
@@ -151,6 +160,7 @@ class OverlayService : Service() {
 
         loadCachedUnits()
         owned = prefs.ownedDefinitionIds
+        levels = prefs.unitLevels
         showBubble()
         refreshUnits()
         refreshRoster()
@@ -250,6 +260,8 @@ class OverlayService : Service() {
             if (roster != null) {
                 owned = roster.ownedDefinitionIds
                 prefs.ownedDefinitionIds = roster.ownedDefinitionIds
+                levels = roster.levels
+                prefs.unitLevels = roster.levels
                 prefs.rosterFetchedAtMillis = roster.pulledAtMillis(System.currentTimeMillis())
                 rosterError = if (roster.stale) "the game didn't answer" else null
             } else {
@@ -357,6 +369,8 @@ class OverlayService : Service() {
         scanTaught.clear()
         identifying = null
         faceBitmaps.clear()
+        scannedLeader = null
+        showWeak = false
         selected.clear()
         if (::searchInput.isInitialized) searchInput.setText("")
         if (capturer == null) {
@@ -455,6 +469,8 @@ class OverlayService : Service() {
         lastAdded = null
         scanActive = false
         identifying = null
+        scannedLeader = ScannedLeader(ids[0]!!, squad.slots[0].relic)
+        showWeak = false
         scheduleMatch(immediate = true)
     }
 
@@ -519,6 +535,18 @@ class OverlayService : Service() {
             resources.displayMetrics.widthPixels to resources.displayMetrics.heightPixels
         }
 
+    /** Room for the panel: the screen minus visible system bars (and a
+     * camera cutout). Overlay windows are laid out between the bars, so a
+     * panel as tall as the whole screen gets its bottom cut off whenever
+     * they show (they're usually hidden in the game). */
+    private fun panelArea(): Pair<Int, Int> {
+        val (w, h) = screenSize()
+        if (Build.VERSION.SDK_INT < 30) return w to h
+        val insets = windowManager.currentWindowMetrics.windowInsets
+            .getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+        return (w - insets.left - insets.right) to (h - insets.top - insets.bottom)
+    }
+
     private fun bubbleSize(): Int = bubbleView?.width?.takeIf { it > 0 } ?: dp(52)
 
     private fun clampBubble() {
@@ -530,7 +558,7 @@ class OverlayService : Service() {
     /** Panel sits beside the bubble when there's room (landscape), otherwise
      * below or above it (portrait). */
     private fun panelLayoutParams(): WindowManager.LayoutParams {
-        val (sw, sh) = screenSize()
+        val (sw, sh) = panelArea()
         val margin = dp(8)
         // A bit wider in landscape (SWGoH), where there's room beside the bubble.
         val w = min(if (sw > sh) dp(420) else dp(360), sw - 2 * margin)
@@ -715,6 +743,8 @@ class OverlayService : Service() {
 
     private fun clearSelection() {
         selected.clear()
+        scannedLeader = null
+        showWeak = false
         lastAdded = null
         if (::searchInput.isInitialized) searchInput.setText("")
         query = ""
@@ -865,9 +895,37 @@ class OverlayService : Service() {
         )
         match.counters.mapNotNull { it.notes }.forEach { addNotes(it) }
 
-        val ranked = CounterRanking.rank(match.counters, owned, prefs.getUsedSquads())
+        // The enemy leader's relic level - only known from a screen scan, and
+        // only while the scanned leader is still the one selected.
+        val scanned = scannedLeader?.takeIf { it.unitId == selected.firstOrNull()?.id }
+        val theirRelic = scanned?.relic
+        if (scanned != null) {
+            addMessage(
+                if (theirRelic != null) "Their leader: R$theirRelic · counters with a leader more than ${CounterRanking.MAX_RELIC_GAP} relic levels below are set aside."
+                else "Their leader's relic level couldn't be read - nothing is set aside.",
+                small = true,
+            )
+        }
+
+        val ranked = CounterRanking.rank(match.counters, owned, prefs.getUsedSquads(), levels, theirRelic)
         if (ranked.isEmpty()) addMessage("No counters saved for this team.")
-        ranked.forEach { addCounterRow(it) }
+        val (weak, shown) = ranked.partition { it.availability == CounterRanking.Availability.TOO_WEAK }
+        shown.forEach { addCounterRow(it, theirRelic) }
+        if (weak.isNotEmpty()) {
+            val toggle = row {
+                addView(
+                    text("Probably too weak (${weak.size})", 14f, R.color.muted, bold = true),
+                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+                )
+                addView(text(if (showWeak) "Hide" else "Show", 13f, R.color.link))
+            }
+            toggle.setOnClickListener {
+                showWeak = !showWeak
+                render()
+            }
+            contentList.addView(toggle)
+            if (showWeak) weak.forEach { addCounterRow(it, theirRelic) }
+        }
 
         val others = found.withIndex().filter { it.index != focusedMatch }
         if (others.isNotEmpty()) {
@@ -890,7 +948,7 @@ class OverlayService : Service() {
         }
     }
 
-    private fun addCounterRow(r: CounterRanking.Ranked) {
+    private fun addCounterRow(r: CounterRanking.Ranked, theirRelic: Int? = null) {
         val squad = r.counter.squad
         val row = LinearLayout(ui).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -910,13 +968,19 @@ class OverlayService : Service() {
             if (i == 0) names.setSpan(StyleSpan(Typeface.BOLD), start, names.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
         body.addView(text(names, 15f, R.color.text))
-        r.counter.statsLabel?.let { body.addView(text(it, 13f, R.color.muted)) }
+        val stats = listOfNotNull(r.counter.statsLabel, r.leaderLevel?.label?.let { "your lead $it" })
+        if (stats.isNotEmpty()) body.addView(text(stats.joinToString(" · "), 13f, R.color.muted))
         r.counter.notes?.let { body.addView(text(it, 13f, R.color.muted, italic = true)) }
         when (r.availability) {
             CounterRanking.Availability.ALREADY_USED ->
                 body.addView(text("Already used: ${r.blockers.joinToString { it.name }}", 13f, R.color.danger))
             CounterRanking.Availability.NOT_OWNED ->
                 body.addView(text("Not in your roster: ${r.blockers.joinToString { it.name }}", 13f, R.color.danger))
+            CounterRanking.Availability.TOO_WEAK ->
+                body.addView(text(
+                    "Probably too weak: your ${r.blockers.firstOrNull()?.name ?: "leader"} ${r.leaderLevel?.label ?: ""} vs their R${theirRelic ?: "?"}",
+                    13f, R.color.danger,
+                ))
             CounterRanking.Availability.AVAILABLE -> Unit
         }
         row.addView(body, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))

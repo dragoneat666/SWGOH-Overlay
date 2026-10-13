@@ -59,6 +59,11 @@ class ApiJsonTest {
             """{"ally_code":"123456789","fetched_at":"2026-10-12T18:00:00.000Z","stale":false,"units":[{"unit_definition_id":"VADER"}]}"""
         ))
         assertEquals(setOf("VADER"), fresh.ownedDefinitionIds)
+        val levels = ApiJson.parseRoster(JSONObject(
+            """{"units":[{"unit_definition_id":"VADER","gear_tier":13,"relic_tier":7},{"unit_definition_id":"TUSKEN","gear_tier":8,"relic_tier":null}]}"""
+        )).levels
+        assertEquals("R7", levels["VADER"]?.label)
+        assertEquals("G8", levels["TUSKEN"]?.label)
         assertEquals(java.time.Instant.parse("2026-10-12T18:00:00Z").toEpochMilli(), fresh.fetchedAtMillis)
         assertEquals(false, fresh.stale)
         val cached = ApiJson.parseRoster(JSONObject("""{"stale":true,"error":"Comlink down","units":[]}"""))
@@ -87,7 +92,7 @@ class ApiJsonTest {
         val scan = ApiJson.parseScan(JSONObject(
             """
             {"width":2404,"height":1080,"beaten":1,"squads":[{"slots":[
-              {"unit_id":7,"score":0.998,"candidates":[{"unit_id":7,"name":"Finn","score":0.998}],"image":"data:image/png;base64,AAAA","fingerprint":[0.1,-0.2]},
+              {"unit_id":7,"score":0.998,"candidates":[{"unit_id":7,"name":"Finn","score":0.998}],"image":"data:image/png;base64,AAAA","fingerprint":[0.1,-0.2],"relic":7},
               {"unit_id":null,"score":0.61,"candidates":[{"unit_id":9,"name":"Rey","score":0.61},{"unit_id":4,"name":null,"score":0.3}],"image":"data:image/png;base64,BBBB","fingerprint":[0.3]}
             ],"matches":null}]}
             """.trimIndent()
@@ -95,6 +100,8 @@ class ApiJsonTest {
         assertEquals(1, scan.beaten)
         val slots = scan.squads.single().slots
         assertEquals(7, slots[0].unitId)
+        assertEquals(7, slots[0].relic)
+        assertNull(slots[1].relic)
         assertNull(slots[1].unitId)
         assertEquals(0.61, slots[1].score!!, 0.0001)
         assertEquals(listOf(9, 4), slots[1].candidates.map { it.unitId })

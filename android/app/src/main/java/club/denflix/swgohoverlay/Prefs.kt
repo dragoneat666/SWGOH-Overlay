@@ -49,6 +49,24 @@ class Prefs(context: Context) {
         get() = sp.getString("units_cache", "") ?: ""
         set(value) = sp.edit().putString("units_cache", value).apply()
 
+    /** Gear/relic per owned unit from the last roster pull, as JSON {id: [gear, relic]}. */
+    var unitLevels: Map<String, UnitLevel>
+        get() {
+            val o = runCatching { JSONObject(sp.getString("unit_levels", "{}") ?: "{}") }.getOrElse { JSONObject() }
+            return o.keys().asSequence().associateWith { k ->
+                val a = o.optJSONArray(k)
+                UnitLevel(
+                    gear = a?.takeUnless { it.isNull(0) }?.optInt(0),
+                    relic = a?.takeUnless { it.isNull(1) }?.optInt(1),
+                )
+            }
+        }
+        set(value) {
+            val o = JSONObject()
+            value.forEach { (k, v) -> o.put(k, JSONArray().put(v.gear ?: JSONObject.NULL).put(v.relic ?: JSONObject.NULL)) }
+            sp.edit().putString("unit_levels", o.toString()).apply()
+        }
+
     /** When the server pulled the roster below from the game (0 = unknown). */
     var rosterFetchedAtMillis: Long
         get() = sp.getLong("roster_fetched_at", 0L)

@@ -52,6 +52,7 @@ class SettingsActivity : AppCompatActivity() {
                         try {
                             val roster = api.fetchRoster(prefs.allyCode)
                             prefs.ownedDefinitionIds = roster.ownedDefinitionIds
+                            prefs.unitLevels = roster.levels
                             prefs.rosterFetchedAtMillis = roster.pulledAtMillis(System.currentTimeMillis())
                             val count = roster.ownedDefinitionIds.size
                             lines += if (roster.stale) {

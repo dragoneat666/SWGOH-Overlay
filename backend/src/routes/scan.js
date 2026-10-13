@@ -6,6 +6,7 @@ const asyncHandler = require("../asyncHandler");
 const { badRequest } = require("../httpError");
 const { matchDefense } = require("../counterQueries");
 const { loadScanLib } = require("../faceFingerprints");
+const { readRelics } = require("../badgeReader");
 
 // Screen scans from the phone overlay: the phone sends a screenshot of the
 // GAC territory screen, this finds the enemy squads that are still
@@ -60,18 +61,20 @@ function rankUnits(fingerprint, library, similarity) {
 // Returns
 //   { width, height, beaten,
 //     squads: [{ slots: [{ unit_id | null, score, candidates: [{unit_id, name, score}],
-//                          image, fingerprint }],
+//                          image, fingerprint, relic }],
 //                matches: [...same as /api/counters/match...] | null }] }
 // `squads` are the lit (still standing) ones, top to bottom. `matches` is
 // filled in once every face in the squad is recognized; otherwise the phone
 // asks about the unknown ones (POST /api/portraits with the returned image
-// and fingerprint) and then looks the squad up itself.
+// and fingerprint) and then looks the squad up itself. `relic` is the
+// relic level read off the portrait's badge (1-10), or null when it has
+// none or it couldn't be read.
 router.post(
   "/gac",
   express.raw({ type: ["image/png", "image/jpeg", "image/jpg"], limit: "25mb" }),
   asyncHandler(async (req, res) => {
     const img = decodeImage(req.body, req.headers["content-type"] || "");
-    const { gac, faces } = await loadScanLib();
+    const { gac, faces, badges } = await loadScanLib();
     const found = gac.detectGacSquads(img);
     const lit = found.filter((s) => s.lit);
 
@@ -81,7 +84,8 @@ router.post(
 
     const squads = [];
     for (const squad of lit) {
-      const slots = squad.slots.map((slot) => {
+      const relics = await readRelics(img, squad.slots, badges);
+      const slots = squad.slots.map((slot, k) => {
         // Fingerprint from the picture, exactly as it will be stored if the
         // user says who this is - so it's recognized next time.
         const picture = faces.facePicture(img, slot.cx, slot.cy, slot.r, faces.RING_SCALE.game);
@@ -98,6 +102,7 @@ router.post(
             .map((c) => ({ unit_id: c.unitId, name: names.get(c.unitId) || null, score: Math.round(c.score * 1000) / 1000 })),
           image: pictureDataUrl(picture),
           fingerprint,
+          relic: relics[k],
         };
       });
       const ids = slots.map((s) => s.unit_id);

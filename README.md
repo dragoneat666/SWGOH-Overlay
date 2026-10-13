@@ -183,6 +183,10 @@ Scanning the screen (GAC map, with the opponent's defense squads showing):
    or **Someone else…** to search. Each answer is saved to the face library,
    so the next scan knows that face.
 4. Once every face is known you get the counters, exactly as in manual mode.
+   The scan also reads the enemy leader's relic level off its badge: a
+   counter whose leader (in your roster) is more than 2 relic levels below
+   it goes into a collapsed "Probably too weak" section, with the reason.
+   Every counter shows your leader's level ("your lead R5").
 
 ## Repo layout
 

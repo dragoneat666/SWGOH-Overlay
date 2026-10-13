@@ -50,6 +50,46 @@ class CounterRankingTest {
         assertEquals(listOf(rey), ranked.last().blockers)
     }
 
+    @Test fun leaderTooFarBelowTheirsIsSetAside() {
+        val levels = mapOf(
+            "GRANDMASTERLUKE" to UnitLevel(13, 5), // R5
+            "GLREY" to UnitLevel(13, 4), // R4
+            "JABBATHEHUTT" to UnitLevel(8, -1), // G8, no relics
+        )
+        // Their leader R7: R5 is exactly 2 below (shown), R4 and G8 aren't.
+        val ranked = CounterRanking.rank(listOf(entry), ownsEverything, emptyList(), levels, opponentLeaderRelic = 7)
+        assertEquals(listOf(1, 2, 3), ranked.map { it.counter.rank })
+        assertEquals(
+            listOf(Availability.AVAILABLE, Availability.TOO_WEAK, Availability.TOO_WEAK),
+            ranked.map { it.availability },
+        )
+        assertEquals(listOf(rey), ranked[1].blockers)
+        assertEquals("R5", ranked[0].leaderLevel?.label)
+        assertEquals("G8", ranked[2].leaderLevel?.label)
+
+        // Too weak goes after used / not owned.
+        val used = listOf(UsedSquad("JML team", listOf(jml.id)))
+        val withUsed = CounterRanking.rank(listOf(entry), ownsEverything, used, levels, opponentLeaderRelic = 7)
+        assertEquals(listOf(1, 2, 3), withUsed.map { it.counter.rank })
+        assertEquals(Availability.ALREADY_USED, withUsed[0].availability)
+
+        // Their level unknown, or ours unknown: nothing set aside.
+        assertTrue(CounterRanking.rank(listOf(entry), ownsEverything, emptyList(), levels, null).all { it.usable })
+        assertTrue(CounterRanking.rank(listOf(entry), ownsEverything, emptyList(), emptyMap(), 7).all { it.usable })
+    }
+
+    @Test fun unitLevelScale() {
+        assertEquals(21, UnitLevel(13, 8).tier)
+        assertEquals(13, UnitLevel(13, 0).tier)
+        assertEquals(12, UnitLevel(12, -1).tier)
+        assertEquals("G13", UnitLevel(13, 0).label)
+        assertEquals(false, CounterRanking.tooWeak(UnitLevel(13, 5), 7))
+        assertEquals(true, CounterRanking.tooWeak(UnitLevel(13, 4), 7))
+        assertEquals("G12 vs R1: exactly 2 below, still shown", false, CounterRanking.tooWeak(UnitLevel(12, null), 1))
+        assertEquals(true, CounterRanking.tooWeak(UnitLevel(11, null), 1))
+        assertEquals(false, CounterRanking.tooWeak(UnitLevel(13, 0), 2))
+    }
+
     @Test fun unknownRosterHidesNothing() {
         assertTrue(CounterRanking.rank(listOf(entry), null, emptyList()).all { it.usable })
     }

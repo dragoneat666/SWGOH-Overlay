@@ -71,6 +71,8 @@ data class ScanSlot(
     val image: String,
     /** The face's fingerprint as JSON, sent back when identifying it. */
     val fingerprintJson: String,
+    /** Relic level read off the portrait's badge (1-10), null if none/unreadable. */
+    val relic: Int? = null,
 )
 
 data class ScanSquad(val slots: List<ScanSlot>)
@@ -156,6 +158,7 @@ object ApiJson {
                         },
                         image = s.optString("image", ""),
                         fingerprintJson = (s.optJSONArray("fingerprint") ?: JSONArray()).toString(),
+                        relic = if (s.isNull("relic")) null else s.optInt("relic").takeIf { it in 1..10 },
                     )
                 })
             },
@@ -170,8 +173,24 @@ object ApiJson {
             .toSet()
     }
 
+    /** Gear/relic of every unit in /api/roster/:allyCode, by game id. */
+    fun parseUnitLevels(o: JSONObject): Map<String, UnitLevel> {
+        val arr = o.optJSONArray("units") ?: return emptyMap()
+        val out = mutableMapOf<String, UnitLevel>()
+        for (i in 0 until arr.length()) {
+            val u = arr.optJSONObject(i) ?: continue
+            val id = u.optString("unit_definition_id").takeIf { it.isNotBlank() } ?: continue
+            out[id] = UnitLevel(
+                gear = if (u.isNull("gear_tier")) null else u.optInt("gear_tier"),
+                relic = if (u.isNull("relic_tier")) null else u.optInt("relic_tier"),
+            )
+        }
+        return out
+    }
+
     fun parseRoster(o: JSONObject): Roster = Roster(
         ownedDefinitionIds = parseOwnedDefinitionIds(o),
+        levels = parseUnitLevels(o),
         fetchedAtMillis = o.optString("fetched_at").takeIf { it.isNotBlank() }
             ?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() },
         stale = o.optBoolean("stale", false),
@@ -181,6 +200,8 @@ object ApiJson {
 /** GET /api/roster, reduced to what the app uses. */
 data class Roster(
     val ownedDefinitionIds: Set<String>,
+    /** Gear/relic per owned unit (game id). */
+    val levels: Map<String, UnitLevel> = emptyMap(),
     /** When the server pulled it from the game, or null if it didn't say. */
     val fetchedAtMillis: Long?,
     /** The game couldn't be reached - this is the server's last copy. */
@@ -190,6 +211,23 @@ data class Roster(
      * fresh pull is from just now (so a server clock that's off doesn't
      * matter); the server's copy is as old as it says (0 = unknown). */
     fun pulledAtMillis(nowMillis: Long): Long = if (stale) fetchedAtMillis ?: 0L else nowMillis
+}
+
+/** How built a unit is: gear tier (1-13) and relic level (1-10; 0 or
+ * negative/null = no relic yet). */
+data class UnitLevel(val gear: Int?, val relic: Int?) {
+    private val hasRelic get() = relic != null && relic >= 1
+
+    /** One scale to compare on: gear 1-13, then relics on top (R1 = 14 ... R10 = 23). */
+    val tier: Int? get() = if (hasRelic) 13 + relic!! else gear
+
+    /** "R7", "G12", or null if unknown. */
+    val label: String? get() = if (hasRelic) "R$relic" else gear?.let { "G$it" }
+
+    companion object {
+        /** Tier of an enemy unit whose badge showed relic level [relic]. */
+        fun relicTier(relic: Int): Int = 13 + relic
+    }
 }
 
 /** How old the phone's copy of your roster is, and when to get a new one. */

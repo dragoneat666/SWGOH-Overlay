@@ -1,4 +1,5 @@
 import { test, before, after } from "node:test";
+import { existsSync, readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { startTestEnv } from "./helpers.mjs";
@@ -9,6 +10,7 @@ import { facePicture, pictureFingerprint, RING_SCALE } from "../../shared/scan/f
 const require = createRequire(import.meta.url);
 const { PNG } = require("pngjs");
 const jpeg = require("jpeg-js");
+const { stopBadgeReader } = require("../src/badgeReader");
 
 let env;
 let u;
@@ -22,6 +24,7 @@ before(async () => {
 });
 
 after(async () => {
+  await stopBadgeReader();
   await env.stop();
 });
 
@@ -85,6 +88,7 @@ test("scans a GAC screen: known faces, an unknown one, then a full match", async
   assert.match(slots[4].image, /^data:image\/png;base64,/);
   assert.ok(slots[4].fingerprint.length > 100);
   assert.equal(first.body.squads[0].matches, null, "no lookup until every face is known");
+  assert.ok(slots.every((s) => s.relic === null), "synthetic badges have no relic number");
 
   // The phone answers "who is this?" with the returned image + fingerprint.
   const taught = await env.api("POST", "/api/portraits", {
@@ -130,4 +134,20 @@ test("a screen with no squads finds nothing", async () => {
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.squads, []);
   assert.equal(res.body.beaten, 0);
+});
+
+// Real screenshots kept outside the repo: GAC_RELICS="C:\shots\lit.png=5,5,5,5,5|7,7,1,5,7"
+// (expected relic levels per lit squad, top to bottom).
+const relicCases = (process.env.GAC_RELICS || "").split(";").filter(Boolean).map((c) => c.split("="));
+test("reads relic levels off real screenshots (GAC_RELICS)", { skip: relicCases.length === 0 || !relicCases.every(([f]) => existsSync(f)) }, async () => {
+  for (const [file, expected] of relicCases) {
+    const png = readFileSync(file);
+    const img = PNG.sync.read(png);
+    const asJpeg = jpeg.encode({ data: img.data, width: img.width, height: img.height }, 92).data;
+    for (const [body, type] of [[png, "image/png"], [asJpeg, "image/jpeg"]]) {
+      const res = await scan(body, type);
+      const got = res.body.squads.map((q) => q.slots.map((s) => s.relic ?? "-").join(",")).join("|");
+      assert.equal(got, expected, `${file} as ${type}`);
+    }
+  }
 });

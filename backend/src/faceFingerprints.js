@@ -19,7 +19,7 @@ async function loadScanLib() {
     const dir = SHARED_DIRS.find((d) => fs.existsSync(path.join(d, "gac.mjs")));
     if (!dir) throw new Error("shared/scan not found");
     const load = (f) => import(pathToFileURL(path.join(dir, f)).href);
-    scanLib = { gac: await load("gac.mjs"), faces: await load("faces.mjs") };
+    scanLib = { gac: await load("gac.mjs"), faces: await load("faces.mjs"), badges: await load("badges.mjs") };
   }
   return scanLib;
 }
