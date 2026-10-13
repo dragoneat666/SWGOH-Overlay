@@ -149,7 +149,8 @@ cd android
 First run on the phone: **Settings** → enter your ally code, the server URL
 (`http://<netbird-ip>:4001` or your domain) and the API token → **Save & test
 connection** (checks the server, the token, the units library and your
-roster). Then **Open Overlay** and allow "Display over other apps".
+roster). Then **Open Overlay + SWGOH** (starts the overlay and opens the
+game) and allow "Display over other apps".
 
 In game (manual mode):
 
@@ -170,6 +171,13 @@ In game (manual mode):
    home view lists used squads, with **Reset round**.
 
 Picks reset automatically if the panel has been closed for 90+ seconds.
+
+Your defense (**Defense Team Scan** on the panel's home view): open one of
+your own GAC defense territories and **Scan my defense** - each squad on
+screen can be added (or **Add all**) - or type units and **Add to defense**.
+Units on your defense can't attack, so counters using them go into **Set
+aside** ("On your defense: ..."). The list stays until you remove squads
+(✕) or **Clear all defense** - **Reset round** doesn't touch it.
 
 Your roster stays current on its own: the overlay pulls it when it starts and
 again when you open the panel and its copy is over 6 hours old (the panel

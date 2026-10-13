@@ -81,12 +81,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun launchOverlay() {
         startOverlayService()
-        // Try to bring SWGoH to the foreground too. If it's not
-        // installed, this silently no-ops and the user just switches
-        // to it themselves - see README for why this isn't hard-required.
-        packageManager.getLaunchIntentForPackage("com.ea.game.starwarscapital_row")
-            ?.let { startActivity(it) }
+        // Open the game too (declared in the manifest's <queries> so Android
+        // lets us see it). Without it, just get out of the way.
+        val game = packageManager.getLaunchIntentForPackage(SWGOH_PACKAGE)
+        if (game != null) {
+            startActivity(game)
+        } else {
+            android.widget.Toast.makeText(this, "SWGOH isn't installed - the overlay is running.", android.widget.Toast.LENGTH_LONG).show()
+        }
         moveTaskToBack(true)
+    }
+
+    companion object {
+        /** Star Wars: Galaxy of Heroes on Google Play. */
+        const val SWGOH_PACKAGE = "com.ea.game.starwarscapital_row"
     }
 
     private fun startOverlayService() {

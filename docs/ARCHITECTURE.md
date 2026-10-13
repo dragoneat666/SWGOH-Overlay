@@ -246,6 +246,15 @@ ally code) and against squads you've already committed to this GAC round.
   Netbird network (no extra auth needed, the mesh network is the access
   control) or your public domain + the bearer token.
 
+## Defense squads
+
+- Units you put on GAC defense can't attack, so the overlay keeps your
+  defense squads (on the phone, like the used list) and sets aside counters
+  that need one of their units. Scanned from your own territory screen (same
+  detection as enemy scans; every squad on screen can be added) or typed in.
+  Unlike the used list they last across rounds - defense rarely changes -
+  until removed or cleared.
+
 ## Used-squad tracking (per GAC round)
 
 - This is **client-side, local app state** — not stored server-side. It's a

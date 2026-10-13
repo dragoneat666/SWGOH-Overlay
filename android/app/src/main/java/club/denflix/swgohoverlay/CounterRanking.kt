@@ -6,6 +6,7 @@ package club.denflix.swgohoverlay
  * - In GAC each character can only attack once per round, so a counter is
  *   out as soon as ANY of its units was in a squad already marked used -
  *   not only when the whole squad matches.
+ * - So is a counter with a unit on your GAC defense (it can't attack).
  * - A counter needing a unit you don't own is out too. While the roster
  *   hasn't loaded (owned == null) ownership is unknown, so nothing is
  *   hidden for that reason.
@@ -28,7 +29,7 @@ object CounterRanking {
     /** Recorded win rates (%) below this aren't recommended. */
     const val MIN_WIN_RATE = 50.0
 
-    enum class Availability { AVAILABLE, ALREADY_USED, NOT_OWNED, TOO_WEAK, LOW_WIN_RATE }
+    enum class Availability { AVAILABLE, ALREADY_USED, ON_DEFENSE, NOT_OWNED, TOO_WEAK, LOW_WIN_RATE }
 
     data class Ranked(
         val counter: CounterSquad,
@@ -54,8 +55,10 @@ object CounterRanking {
         used: List<UsedSquad>,
         levels: Map<String, UnitLevel> = emptyMap(),
         opponentLeaderRelic: Int? = null,
+        defense: List<UsedSquad> = emptyList(),
     ): List<Ranked> {
         val usedUnitIds = used.flatMap { it.unitIds }.toSet()
+        val defenseUnitIds = defense.flatMap { it.unitIds }.toSet()
 
         val seenSquads = mutableSetOf<Int>()
         val counters = entries
@@ -70,8 +73,10 @@ object CounterRanking {
             }
             val leader = c.squad.units.firstOrNull()
             val leaderLevel = leader?.definitionId?.let { levels[it] }
+            val onDefense = c.squad.units.filter { it.id in defenseUnitIds }
             when {
                 usedUnits.isNotEmpty() -> Ranked(c, Availability.ALREADY_USED, usedUnits, leaderLevel)
+                onDefense.isNotEmpty() -> Ranked(c, Availability.ON_DEFENSE, onDefense, leaderLevel)
                 missing.isNotEmpty() -> Ranked(c, Availability.NOT_OWNED, missing, leaderLevel)
                 tooWeak(leaderLevel, opponentLeaderRelic) -> Ranked(c, Availability.TOO_WEAK, listOfNotNull(leader), leaderLevel)
                 (c.winRate ?: 100.0) < MIN_WIN_RATE -> Ranked(c, Availability.LOW_WIN_RATE, emptyList(), leaderLevel)

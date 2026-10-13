@@ -12,8 +12,8 @@ package club.denflix.swgohoverlay
  *   every returned match is used, closest first.
  * - A counter squad is listed once, under the closest team it was recorded
  *   against.
- * - Usable counters stay under their team; used, not owned, probably too
- *   weak and low-win-rate ones go to [setAside]. Teams left with nothing
+ * - Usable counters stay under their team; used, on your defense, not
+ *   owned, probably too weak and low-win-rate ones go to [setAside]. Teams left with nothing
  *   usable aren't listed (their counters are still in [setAside]).
  */
 object CounterBoard {
@@ -33,6 +33,7 @@ object CounterBoard {
         used: List<UsedSquad>,
         levels: Map<String, UnitLevel> = emptyMap(),
         opponentLeaderRelic: Int? = null,
+        defense: List<UsedSquad> = emptyList(),
     ): Board {
         val minShared = minOf(pickedCount, MIN_SHARED)
         val candidates = if (matches.any { it.leaderMatch }) {
@@ -44,7 +45,7 @@ object CounterBoard {
         val teams = mutableListOf<Team>()
         val setAside = mutableListOf<SetAside>()
         for (match in candidates) {
-            val ranked = CounterRanking.rank(match.counters, owned, used, levels, opponentLeaderRelic)
+            val ranked = CounterRanking.rank(match.counters, owned, used, levels, opponentLeaderRelic, defense)
                 .filter { seen.add(it.counter.squad.id) }
             val usable = ranked.filter { it.usable }
             if (usable.isNotEmpty()) teams += Team(match, usable)

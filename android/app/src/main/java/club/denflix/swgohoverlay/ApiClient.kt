@@ -80,10 +80,6 @@ class ApiClient(private val prefs: Prefs) {
         return ApiJson.parseUnits(JSONArray(body)) to body
     }
 
-    /** GET /api/counters/defender-squads - every defense team with counters on file. */
-    fun fetchDefenderSquads(): List<Squad> =
-        ApiJson.parseDefenderSquads(JSONObject(get("/api/counters/defender-squads")))
-
     /** GET /api/counters/match - known defense teams closest to the units
      * seen on the enemy team (leader first), each with its counters. */
     fun match(unitIds: List<Int>, limit: Int = 4): List<TeamMatch> =

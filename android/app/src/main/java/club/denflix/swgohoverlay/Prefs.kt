@@ -86,8 +86,10 @@ class Prefs(context: Context) {
         get() = sp.getString("used_squads_json", "[]") ?: "[]"
         set(value) = sp.edit().putString("used_squads_json", value).apply()
 
-    fun getUsedSquads(): List<UsedSquad> {
-        val arr = runCatching { JSONArray(usedSquadsJson) }.getOrElse { JSONArray() }
+    fun getUsedSquads(): List<UsedSquad> = parseSquads(usedSquadsJson)
+
+    private fun parseSquads(json: String): List<UsedSquad> {
+        val arr = runCatching { JSONArray(json) }.getOrElse { JSONArray() }
         val result = mutableListOf<UsedSquad>()
         for (i in 0 until arr.length()) {
             val obj = arr.getJSONObject(i)
@@ -99,11 +101,7 @@ class Prefs(context: Context) {
     }
 
     private fun saveUsedSquads(squads: List<UsedSquad>) {
-        val arr = JSONArray()
-        squads.forEach { squad ->
-            arr.put(JSONObject().put("label", squad.label).put("unit_ids", JSONArray(squad.unitIds)))
-        }
-        usedSquadsJson = arr.toString()
+        usedSquadsJson = toJson(squads)
     }
 
     fun addUsedSquad(squad: UsedSquad) {
@@ -116,6 +114,36 @@ class Prefs(context: Context) {
 
     fun clearUsedSquads() {
         usedSquadsJson = "[]"
+    }
+
+    // Your GAC defense: squads placed on defense can't attack. Kept until you
+    // clear them - unlike the used list, they don't reset each round.
+    private var defenseSquadsJson: String
+        get() = sp.getString("defense_squads_json", "[]") ?: "[]"
+        set(value) = sp.edit().putString("defense_squads_json", value).apply()
+
+    fun getDefenseSquads(): List<UsedSquad> = parseSquads(defenseSquadsJson)
+
+    /** Adds a defense squad, unless the same units are already on defense. */
+    fun addDefenseSquad(squad: UsedSquad): Boolean {
+        val current = getDefenseSquads()
+        if (current.any { it.unitIds.toSet() == squad.unitIds.toSet() }) return false
+        defenseSquadsJson = toJson(current + squad)
+        return true
+    }
+
+    fun removeDefenseSquad(index: Int) {
+        defenseSquadsJson = toJson(getDefenseSquads().filterIndexed { i, _ -> i != index })
+    }
+
+    fun clearDefenseSquads() {
+        defenseSquadsJson = "[]"
+    }
+
+    private fun toJson(squads: List<UsedSquad>): String {
+        val arr = JSONArray()
+        squads.forEach { s -> arr.put(JSONObject().put("label", s.label).put("unit_ids", JSONArray(s.unitIds))) }
+        return arr.toString()
     }
 
     fun isConfigured(): Boolean =

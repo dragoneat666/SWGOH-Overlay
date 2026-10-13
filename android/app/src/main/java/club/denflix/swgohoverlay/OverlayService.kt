@@ -128,8 +128,16 @@ class OverlayService : Service() {
     /** Why the last roster pull didn't give a fresh roster (null = it did). */
     private var rosterError: String? = null
     private var rosterAttemptAtMillis = 0L
-    private var knownTeams: List<Squad>? = null
-    private var knownTeamsError: String? = null
+    // "Defense Team Scan": your own GAC defense. Units on it can't attack.
+    private var defenseMode = false
+    /** Units picked by hand for the next defense squad. */
+    private val defenseDraft = mutableListOf<GameUnit>()
+    /** Whether the current scan is of your own defense (vs an enemy territory). */
+    private var scanForDefense = false
+    /** Scanned squads already added to your defense. */
+    private val scanAdded = mutableSetOf<Int>()
+    /** "Clear all" asks for a second tap first. */
+    private var confirmClearDefense = false
 
     /** Units picked from the enemy team, leader first. */
     private val selected = mutableListOf<GameUnit>()
@@ -306,18 +314,6 @@ class OverlayService : Service() {
         }
     }
 
-    private fun refreshKnownTeams() {
-        runAsync({ api.fetchDefenderSquads() }) { teams, err ->
-            if (teams != null) {
-                knownTeams = teams
-                knownTeamsError = null
-            } else {
-                knownTeamsError = errorText(err)
-            }
-            render()
-        }
-    }
-
     /** Re-run the match lookup shortly after the selection changes. */
     private fun scheduleMatch(immediate: Boolean = false) {
         matchSeq++
@@ -374,7 +370,9 @@ class OverlayService : Service() {
 
     // --- Screen scan -------------------------------------------------------
 
-    private fun startScan() {
+    private fun startScan(forDefense: Boolean = defenseMode) {
+        scanForDefense = forDefense
+        scanAdded.clear()
         scanActive = true
         scanBusy = null
         scanError = null
@@ -383,9 +381,11 @@ class OverlayService : Service() {
         scanTaught.clear()
         identifying = null
         faceBitmaps.clear()
-        scannedLeader = null
-        scannedFaces = emptyMap()
-        selected.clear()
+        if (!forDefense) {
+            scannedLeader = null
+            scannedFaces = emptyMap()
+            selected.clear()
+        }
         if (::searchInput.isInitialized) searchInput.setText("")
         if (capturer == null) {
             // First scan this session: Android asks for screen-capture
@@ -456,7 +456,7 @@ class OverlayService : Service() {
                     scanError = "Couldn't read the screen: ${errorText(err)}"
                 } else {
                     scanResult = result
-                    if (result.squads.size == 1) scanSquad = 0
+                    if (result.squads.size == 1 && !scanForDefense) scanSquad = 0
                     finishScanIfReady()
                 }
                 render()
@@ -476,6 +476,12 @@ class OverlayService : Service() {
         val ids = squad.slots.indices.map { scanUnitId(index, it) }
         if (ids.any { it == null }) return
         val byId = units.associateBy { it.id }
+        if (scanForDefense) {
+            addScannedDefense(index)
+            scanSquad = null
+            identifying = null
+            return
+        }
         selected.clear()
         ids.distinct().forEach { id ->
             selected.add(byId[id] ?: GameUnit(id!!, null, "Unit #$id", false))
@@ -507,6 +513,16 @@ class OverlayService : Service() {
             finishScanIfReady()
             render()
         }
+    }
+
+    /** Puts a fully identified scanned squad on your defense. */
+    private fun addScannedDefense(index: Int) {
+        val squad = scanResult?.squads?.getOrNull(index) ?: return
+        val ids = squad.slots.indices.mapNotNull { scanUnitId(index, it) }.distinct()
+        if (ids.size != squad.slots.size) return
+        val byId = units.associateBy { it.id }
+        prefs.addDefenseSquad(UsedSquad(ids.joinToString(", ") { byId[it]?.name ?: "Unit #$it" }, ids))
+        scanAdded += index
     }
 
     private fun endScan() {
@@ -697,8 +713,6 @@ class OverlayService : Service() {
             windowManager.addView(panel, panelLayoutParams())
             panelShowing = true
         }
-        // Pick up counters added in the web UI since last time.
-        refreshKnownTeams()
         refreshRosterIfOld()
         if (units.isEmpty() || unitsError != null) refreshUnits()
         if (selected.isNotEmpty()) scheduleMatch(immediate = true) else render()
@@ -728,7 +742,15 @@ class OverlayService : Service() {
         panel.findViewById<View>(R.id.btnCollapse).setOnClickListener { hidePanel() }
         btnStop = panel.findViewById(R.id.btnStop)
         btnStop.setOnClickListener { stopSelf() }
-        btnClear.setOnClickListener { clearSelection() }
+        btnClear.setOnClickListener {
+            if (defenseMode) {
+                defenseDraft.clear()
+                searchInput.setText("")
+                render()
+            } else {
+                clearSelection()
+            }
+        }
 
         searchInput.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -768,8 +790,18 @@ class OverlayService : Service() {
     /** A search result was tapped (or picked with the keyboard). */
     private fun pickFromSearch(unit: GameUnit) {
         val target = identifying
-        if (target != null) identifyScanFace(target.first, target.second, unit) else addUnit(unit)
+        when {
+            target != null -> identifyScanFace(target.first, target.second, unit)
+            defenseMode -> {
+                if (defenseDraft.none { it.id == unit.id } && defenseDraft.size < 5) defenseDraft.add(unit)
+                searchInput.setText("") // re-renders
+            }
+            else -> addUnit(unit)
+        }
     }
+
+    /** The units being picked right now: the enemy team, or a defense squad. */
+    private fun picks(): List<GameUnit> = if (defenseMode && identifying == null) defenseDraft else selected
 
     private fun addUnit(unit: GameUnit) {
         if (selected.none { it.id == unit.id }) selected.add(unit)
@@ -781,8 +813,8 @@ class OverlayService : Service() {
     private fun currentSearchResults(): List<GameUnit> =
         UnitSearch.search(
             units, query,
-            exclude = selected.map { it.id }.toSet(),
-            kind = UnitSearch.kindFor(selected),
+            exclude = picks().map { it.id }.toSet(),
+            kind = UnitSearch.kindFor(picks()),
         )
 
     // --- Rendering -------------------------------------------------------------
@@ -798,12 +830,14 @@ class OverlayService : Service() {
                 .hideSoftInputFromWindow(searchInput.windowToken, 0)
         }
         searchInput.visibility = if (hideSearch) View.GONE else View.VISIBLE
-        btnClear.visibility = if (selected.isNotEmpty() || query.isNotBlank()) View.VISIBLE else View.GONE
+        searchInput.hint = getString(if (defenseMode && identifying == null) R.string.defense_search_hint else R.string.search_hint)
+        btnClear.visibility = if (picks().isNotEmpty() || query.isNotBlank()) View.VISIBLE else View.GONE
 
         contentList.removeAllViews()
         when {
             query.isNotBlank() -> renderSearchResults()
             scanActive -> renderScan()
+            defenseMode -> renderDefense()
             selected.isNotEmpty() -> renderMatches()
             else -> renderHome()
         }
@@ -814,7 +848,8 @@ class OverlayService : Service() {
     private fun renderTitle() {
         val (label, color) = when {
             identifying != null && query.isBlank() -> "Who is this? Type a name" to R.color.accent
-            scanActive && query.isBlank() -> "Screen scan" to R.color.accent
+            scanActive && query.isBlank() -> (if (scanForDefense) "Defense scan" else "Screen scan") to R.color.accent
+            defenseMode && query.isBlank() -> "Your defense" to R.color.accent
             query.isNotBlank() -> {
                 val top = currentSearchResults().firstOrNull()
                 if (top != null) "✓ ${top.name}" to R.color.text else "No match" to R.color.danger
@@ -827,19 +862,34 @@ class OverlayService : Service() {
         panelTitle.setTextColor(ContextCompat.getColor(ui, color))
         // Stop is only offered on the home view, leaving the title room to
         // show full unit names while you're picking.
-        btnStop.visibility = if (query.isBlank() && selected.isEmpty()) View.VISIBLE else View.GONE
+        btnStop.visibility = if (query.isBlank() && selected.isEmpty() && !defenseMode) View.VISIBLE else View.GONE
     }
 
     /** The enemy team is complete: it came from a scan, or 5 units are
      * picked. Then the search box goes away (Clear starts over). */
     private fun teamIsSet(): Boolean {
-        if (selected.isEmpty() || query.isNotBlank() || scanActive) return false
+        if (defenseMode || selected.isEmpty() || query.isNotBlank() || scanActive) return false
         return selected.size >= 5 || scannedLeader?.unitId == selected.first().id
     }
 
     /** The picked enemy units as faces: tap to remove, long-press to make leader. */
     private fun renderChips() {
         selectedChips.removeAllViews()
+        if (defenseMode) {
+            // The defense squad being picked by hand: tap a face to remove it.
+            selectedChips.visibility = if (defenseDraft.isEmpty() || scanActive) View.GONE else View.VISIBLE
+            defenseDraft.toList().forEachIndexed { i, unit ->
+                val face = unitFace(unit, 40, leader = i == 0).apply {
+                    contentDescription = "${unit.name}, tap to remove"
+                    setOnClickListener {
+                        defenseDraft.removeAt(i)
+                        render()
+                    }
+                }
+                selectedChips.addView(face, ViewGroup.MarginLayoutParams(dp(40), dp(40)))
+            }
+            return
+        }
         selectedChips.visibility = if (selected.isEmpty()) View.GONE else View.VISIBLE
         selected.forEachIndexed { i, unit ->
             val face = unitFace(unit, 40, leader = i == 0, scanImage = scannedFaces[unit.id]).apply {
@@ -932,6 +982,7 @@ class OverlayService : Service() {
             return
         }
         if (identifying != null) addMessage("Tap who that face is.", small = true)
+        else if (defenseMode) addMessage("Tap a unit to add it to the defense squad.", small = true)
         else if (selected.isEmpty()) addMessage("Tap the enemy leader first.", small = true)
         results.forEach { unit ->
             val row = row {
@@ -974,7 +1025,7 @@ class OverlayService : Service() {
             )
         }
 
-        val board = CounterBoard.build(found, selected.size, owned, prefs.getUsedSquads(), levels, theirRelic)
+        val board = CounterBoard.build(found, selected.size, owned, prefs.getUsedSquads(), levels, theirRelic, prefs.getDefenseSquads())
         if (board.teams.isEmpty()) {
             addMessage(
                 if (board.setAside.isEmpty()) "No counters saved for teams like this one yet."
@@ -1012,7 +1063,7 @@ class OverlayService : Service() {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = dp(12) })
             if (showSetAside) {
-                addMessage("Probably too weak, already used, missing units, or under ${CounterRanking.MIN_WIN_RATE.toInt()}% win.", small = true)
+                addMessage("Probably too weak, already used, on your defense, missing units, or under ${CounterRanking.MIN_WIN_RATE.toInt()}% win.", small = true)
                 board.setAside.forEach { addCounterRow(it.ranked, theirRelic) }
             }
         }
@@ -1065,6 +1116,7 @@ class OverlayService : Service() {
         r.counter.notes?.let { body.addView(text(it, 13f, R.color.muted, italic = true)) }
         val reason = when (r.availability) {
             CounterRanking.Availability.ALREADY_USED -> "Already used: ${r.blockers.joinToString { it.name }}"
+            CounterRanking.Availability.ON_DEFENSE -> "On your defense: ${r.blockers.joinToString { it.name }}"
             CounterRanking.Availability.NOT_OWNED -> "Not in your roster: ${r.blockers.joinToString { it.name }}"
             CounterRanking.Availability.TOO_WEAK ->
                 "Probably too weak: your ${r.blockers.firstOrNull()?.name ?: "leader"} ${r.leaderLevel?.label ?: ""} vs their R${theirRelic ?: "?"}"
@@ -1104,8 +1156,11 @@ class OverlayService : Service() {
 
         if (result.squads.isEmpty()) {
             addMessage(
-                if (result.beaten > 0) "Every squad on screen is already beaten."
-                else "No enemy squads found. Open an enemy territory (its list of squads) and scan again."
+                when {
+                    scanForDefense -> "No squads found. Open one of your defense territories (its list of squads) and scan again."
+                    result.beaten > 0 -> "Every squad on screen is already beaten."
+                    else -> "No enemy squads found. Open an enemy territory (its list of squads) and scan again."
+                }
             )
             scanAgain()
             addButton("Close", accent = false) { endScan() }
@@ -1113,6 +1168,10 @@ class OverlayService : Service() {
         }
 
         val chosen = scanSquad
+        if (chosen == null && scanForDefense) {
+            renderDefenseScanList(result)
+            return
+        }
         if (chosen == null) {
             addHeading("Which squad are you attacking?")
             result.squads.forEachIndexed { i, squad ->
@@ -1186,11 +1245,132 @@ class OverlayService : Service() {
         scanAgain()
     }
 
+    /** After scanning your defense: each squad on screen, to add to it. */
+    private fun renderDefenseScanList(result: ScanResult) {
+        val ready = result.squads.indices.filter { i ->
+            i !in scanAdded && result.squads[i].slots.indices.all { scanUnitId(i, it) != null }
+        }
+        addHeading(if (scanAdded.size == result.squads.size) "Added to your defense" else "Add these to your defense?")
+        result.squads.forEachIndexed { i, squad ->
+            val unknown = squad.slots.indices.count { scanUnitId(i, it) == null }
+            val row = LinearLayout(ui).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                setBackgroundResource(R.drawable.row_bg)
+                isClickable = i !in scanAdded
+            }
+            val faces = LinearLayout(ui).apply { orientation = LinearLayout.HORIZONTAL }
+            squad.slots.forEach { faces.addView(faceView(it.image, 36)) }
+            row.addView(faces)
+            row.addView(text(
+                when {
+                    i in scanAdded -> "✓ On your defense"
+                    unknown > 0 -> "$unknown face${if (unknown == 1) "" else "s"} to identify - tap"
+                    else -> squad.slots.indices.joinToString(", ") { unitName(scanUnitId(i, it)) } + " - tap to add"
+                },
+                13f, if (i in scanAdded) R.color.accent else R.color.muted,
+            ))
+            if (i !in scanAdded) row.setOnClickListener {
+                if (unknown == 0) addScannedDefense(i) else scanSquad = i
+                render()
+            }
+            contentList.addView(row)
+        }
+        if (ready.size > 1) {
+            addButton("Add all ${ready.size}", accent = true) {
+                ready.forEach { addScannedDefense(it) }
+                render()
+            }
+        }
+        addButton(if (scanAdded.isEmpty()) "Cancel" else "Done", accent = scanAdded.isNotEmpty() && ready.isEmpty()) { endScan() }
+        addButton("Scan again", accent = false) { startScan(forDefense = true) }
+    }
+
+    /** Your GAC defense: scan it or add squads by hand. Units on it can't
+     * attack, so counters using them are set aside. Kept until cleared -
+     * "Reset round" doesn't touch it. */
+    private fun renderDefense() {
+        addButton("Scan my defense", accent = true) { startScan(forDefense = true) }
+        addMessage("Open one of your defense territories in GAC and scan it - or type units above and add them as a squad.", small = true)
+
+        if (defenseDraft.isNotEmpty()) {
+            addButton("Add ${defenseDraft.size} unit${if (defenseDraft.size == 1) "" else "s"} to defense", accent = true) {
+                prefs.addDefenseSquad(UsedSquad(defenseDraft.joinToString(", ") { it.name }, defenseDraft.map { it.id }))
+                defenseDraft.clear()
+                render()
+            }
+        }
+
+        val defense = prefs.getDefenseSquads()
+        val byId = units.associateBy { it.id }
+        addSection("On defense (${defense.size} squad${if (defense.size == 1) "" else "s"})")
+        if (defense.isEmpty()) addMessage("Nothing yet.", small = true)
+        defense.forEachIndexed { i, squad ->
+            val row = row {
+                addView(
+                    faceRow(squad.unitIds.map { byId[it] ?: GameUnit(it, null, "Unit #$it", false) }, 28),
+                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+                )
+                addView(text("✕", 15f, R.color.muted).apply { setPadding(dp(10), 0, dp(4), 0) })
+            }
+            row.contentDescription = "Remove ${squad.label} from your defense"
+            row.setOnClickListener {
+                prefs.removeDefenseSquad(i)
+                render()
+            }
+            contentList.addView(row)
+        }
+
+        val buttons = row {
+            background = null
+            addView(button("Back", accent = false) {
+                defenseMode = false
+                defenseDraft.clear()
+                confirmClearDefense = false
+                if (::searchInput.isInitialized) searchInput.setText("")
+                render()
+            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(34)))
+            addView(View(ui), LinearLayout.LayoutParams(0, 1, 1f))
+            if (defense.isNotEmpty()) addView(text(if (confirmClearDefense) "Tap again to clear all" else "Clear all defense", 13f, R.color.danger).apply {
+                setPadding(dp(8), dp(6), dp(4), dp(6))
+                setOnClickListener {
+                    if (confirmClearDefense) {
+                        prefs.clearDefenseSquads()
+                        confirmClearDefense = false
+                    } else {
+                        confirmClearDefense = true
+                    }
+                    render()
+                }
+            })
+        }
+        contentList.addView(buttons, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(10) })
+    }
+
     private fun renderHome() {
         if (!prefs.isConfigured()) {
             addMessage("Open the SWGOH Overlay app's Settings and enter your server URL, token and ally code.")
         }
-        addButton("Scan screen", accent = true) { startScan() }
+        val scanButtons = row {
+            background = null
+            setPadding(0, 0, 0, 0)
+            addView(button("Scan screen", accent = true) { startScan(forDefense = false) },
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(38)))
+            addView(button("Defense Team Scan", accent = false) {
+                defenseMode = true
+                confirmClearDefense = false
+                render()
+            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(38)).apply { marginStart = dp(8) })
+        }
+        contentList.addView(scanButtons, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(6); bottomMargin = dp(4) })
+        val onDefense = prefs.getDefenseSquads()
+        if (onDefense.isNotEmpty()) {
+            addMessage("On defense: ${onDefense.size} squad${if (onDefense.size == 1) "" else "s"} (${onDefense.sumOf { it.unitIds.size }} units) - not suggested for attacks.", small = true)
+        }
         if (units.isEmpty()) {
             addMessage(unitsError?.let { "Couldn't load units: $it" } ?: "Loading units…")
         } else {
@@ -1225,27 +1405,6 @@ class OverlayService : Service() {
             }
         }
 
-        addSection("Saved defense teams")
-        val teams = knownTeams
-        when {
-            teams == null && knownTeamsError != null -> addMessage("Couldn't load teams: $knownTeamsError")
-            teams == null -> addMessage("Loading…")
-            teams.isEmpty() -> addMessage("No counters saved yet - add some in the web app.")
-            else -> teams.forEach { team ->
-                val row = row {
-                    val label = SpannableStringBuilder(team.leader?.name ?: "Unknown")
-                    label.setSpan(StyleSpan(Typeface.BOLD), 0, label.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    if (team.units.size > 1) label.append("  +${team.units.size - 1}")
-                    addView(text(label, 15f, R.color.text), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-                }
-                row.setOnClickListener {
-                    selected.clear()
-                    selected.addAll(team.units)
-                    scheduleMatch(immediate = true)
-                }
-                contentList.addView(row)
-            }
-        }
     }
 
     // --- View helpers ----------------------------------------------------------

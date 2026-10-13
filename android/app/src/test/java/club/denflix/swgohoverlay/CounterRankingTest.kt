@@ -90,6 +90,25 @@ class CounterRankingTest {
         assertEquals(false, CounterRanking.tooWeak(UnitLevel(13, 0), 2))
     }
 
+    @Test fun unitsOnYourDefenseCantAttack() {
+        // Cal is on defense: Rey + Cal (#2) is out, the rest are fine.
+        val defense = listOf(UsedSquad("Cal team", listOf(cal.id, 99)))
+        val ranked = CounterRanking.rank(listOf(entry), ownsEverything, emptyList(), defense = defense)
+        assertEquals(listOf(1, 3, 2), ranked.map { it.counter.rank })
+        assertEquals(Availability.ON_DEFENSE, ranked.last().availability)
+        assertEquals(listOf(cal), ranked.last().blockers)
+        // Used this round wins as the reason when both apply.
+        val used = listOf(UsedSquad("Rey team", listOf(rey.id)))
+        assertEquals(Availability.ALREADY_USED, CounterRanking.rank(listOf(entry), ownsEverything, used, defense = defense).last().availability)
+    }
+
+    @Test fun lowWinRateIsSetAside() {
+        val e = CounterEntry(3, null, listOf(CounterSquad(1, null, Squad(30, listOf(jml)), winRate = 14.0), CounterSquad(2, null, Squad(31, listOf(rey)), winRate = 50.0)))
+        val ranked = CounterRanking.rank(listOf(e), ownsEverything, emptyList())
+        assertEquals(listOf(Availability.AVAILABLE, Availability.LOW_WIN_RATE), ranked.map { it.availability })
+        assertEquals(31, ranked.first().counter.squad.id)
+    }
+
     @Test fun unknownRosterHidesNothing() {
         assertTrue(CounterRanking.rank(listOf(entry), null, emptyList()).all { it.usable })
     }
