@@ -7,8 +7,38 @@ import StatsLine from "../components/StatsLine.jsx";
 import Icon from "../components/Icon.jsx";
 
 // "What does this squad beat?" - build an attacking squad (leader + up to 4)
-// and see which saved defense teams it has a record against. Below that,
-// the squads that counter the most defense teams in your data.
+// and see which saved defense teams it has a record against - including
+// close variants (same leader, 3+ units in common; see the API's
+// /counters/offense). Below that, the squads that counter the most defense
+// teams in your data, grouped by core (leader + the 2 members its variants
+// share), so one team's swapped last slots don't split it up.
+
+const names = (units) => units.map((u) => u.name).join(", ");
+
+/** How a recorded squad relates to the one searched for. */
+function MatchNote({ result, entered }) {
+  if (result.exact) return null;
+  if (result.yours_not_used.length === 0) {
+    // Everything entered is in it - it's the full squad they're part of.
+    return (
+      <div className="offense-full">
+        <span className="eyebrow">Full squad used</span>
+        <SquadView squad={result.squad} size={26} />
+      </div>
+    );
+  }
+  return (
+    <div className="offense-full">
+      <span className="match-tag">
+        {result.shared} of your {entered} match
+      </span>
+      <p className="small muted">
+        They used {names(result.theirs_extra) || "fewer units"} instead of your {names(result.yours_not_used)}.
+      </p>
+      <SquadView squad={result.squad} size={26} />
+    </div>
+  );
+}
 export default function OffensePage() {
   const [squad, setSquad] = useState([]);
   const [results, setResults] = useState(null); // null = not searched yet
@@ -38,6 +68,7 @@ export default function OffensePage() {
     }
   }, []);
 
+  // Searching the core finds every variant of the team.
   function pickPopular(s) {
     const ids = s.units.map((u) => u.id);
     setSquad(ids);
@@ -46,6 +77,8 @@ export default function OffensePage() {
   }
 
   const stale = results && searchedFor !== squad.join(",");
+  const entered = searchedFor ? searchedFor.split(",").length : 0;
+  const closeCount = results ? results.filter((r) => r.yours_not_used.length > 0).length : 0;
 
   return (
     <div className="page">
@@ -78,7 +111,7 @@ export default function OffensePage() {
               ? "Start with the leader."
               : squad.length < 5
                 ? "Add more members, or search now - fewer units also finds the full squads they're part of."
-                : "Full squad."}
+                : "Full squad - close variants (3+ units in common) count too."}
           </span>
         </div>
       </section>
@@ -90,20 +123,24 @@ export default function OffensePage() {
           <h2 className="section-title">
             {results.length === 0
               ? "No recorded wins for this squad yet"
-              : `Beats ${new Set(results.map((r) => r.defender.id)).size} defense team${
-                  new Set(results.map((r) => r.defender.id)).size === 1 ? "" : "s"
-                }`}
+              : `Beats ${results.length} defense team${results.length === 1 ? "" : "s"}`}
+            {closeCount > 0 && (
+              <span className="muted small">
+                {" "}
+                ({closeCount} with a close variant of your squad)
+              </span>
+            )}
             {stale && <span className="muted small"> - squad changed, search again</span>}
           </h2>
           {results.length === 0 && (
             <p className="muted">
-              This squad isn't listed as a counter for any saved defense team. Try fewer units (leader + 1-2) to
-              find the full squads it's part of.
+              No saved counter squad with this leader shares at least 3 of these units. Try just the leader to see
+              every squad it leads.
             </p>
           )}
           <ul className="counter-list">
             {results.map((r) => (
-              <li key={`${r.counter_id}-${r.squad.id}`}>
+              <li key={r.counter_id}>
                 <Link className="card offense-result" to={`/counters/${r.counter_id}`}>
                   <div className="offense-vs">
                     <span className="eyebrow">Beats this defense</span>
@@ -111,12 +148,7 @@ export default function OffensePage() {
                   </div>
                   <div className="offense-stats">
                     <StatsLine squad={r} />
-                    {!r.exact && (
-                      <div className="offense-full">
-                        <span className="eyebrow">Full squad used</span>
-                        <SquadView squad={r.squad} size={26} />
-                      </div>
-                    )}
+                    <MatchNote result={r} entered={entered} />
                     {r.notes && <p className="notes">{r.notes}</p>}
                   </div>
                 </Link>
@@ -126,9 +158,10 @@ export default function OffensePage() {
         </section>
       )}
 
-      <h2 className="section-title">Popular squads</h2>
+      <h2 className="section-title">Popular teams</h2>
       <p className="muted small">
-        The attack squads that counter the most defense teams in your data, with their average win rate.
+        The attack teams that counter the most defense teams in your data, with their average win rate. Each is a
+        leader and its core members; the other slots vary.
       </p>
       {!popular && <p className="muted">Loading…</p>}
       {popular && popular.length === 0 && (
@@ -141,6 +174,13 @@ export default function OffensePage() {
           <li key={s.id} className="card popular-squad">
             <div className="grow">
               <SquadView squad={s} size={32} />
+              {s.flex.length > 0 && (
+                <p className="small muted popular-flex">
+                  + {s.flex.slice(0, 4).map((u) => u.name).join(", ")}
+                  {s.flex.length > 4 ? ` and ${s.flex.length - 4} more` : ""}
+                  {s.variants > 1 ? ` · ${s.variants} variants` : ""}
+                </p>
+              )}
               <div className="stats-line">
                 <span>
                   Beats <strong>{s.defense_teams}</strong> defense team{s.defense_teams === 1 ? "" : "s"}

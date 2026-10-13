@@ -46,6 +46,19 @@ const MIGRATIONS = [
      source      TEXT,
      created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
    )`,
+
+  // Rosters: a new raw snapshot is only archived when the roster changed
+  // (roster_hash), and roster_sync tracks which ally codes the phone uses so
+  // the server can refresh them in the background (rosterSync.js).
+  `ALTER TABLE roster_snapshots ADD COLUMN IF NOT EXISTS roster_hash TEXT`,
+  `CREATE TABLE IF NOT EXISTS roster_sync (
+     ally_code         TEXT PRIMARY KEY,
+     player_name       TEXT,
+     last_requested_at TIMESTAMPTZ,
+     last_pulled_at    TIMESTAMPTZ,
+     last_error        TEXT,
+     last_error_at     TIMESTAMPTZ
+   )`,
 ];
 
 // /app/db/init.sql inside the Docker image, ../db/init.sql in a repo checkout.

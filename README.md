@@ -69,8 +69,11 @@ Tabs:
 - **Defense** - search the defense team you're facing to see the squads
   that beat it, best first (ranked from win rate and average banners).
 - **Offense** - build an attack squad (leader + up to 4) and see which
-  defense teams it beats and its win rate against each; below, the squads
-  that counter the most defense teams in your data.
+  defense teams it beats and its win rate against each. Recorded squads with
+  the same leader and at least 3 units in common count too (marked "4 of
+  your 5 match" with what differed); below, the teams that counter the
+  most defense teams in your data, grouped by core (leader + 2 members) so a
+  team's swapped last slots don't split it up.
 - **Import**, **Faces**, **Units** - see below.
 
 First time: go to **Units → Import from game** to load every character and
@@ -162,6 +165,12 @@ In game (manual mode):
    home view lists used squads, with **Reset round**.
 
 Picks reset automatically if the panel has been closed for 90+ seconds.
+
+Your roster stays current on its own: the overlay pulls it when it starts and
+again when you open the panel and its copy is over 6 hours old (the panel
+shows "Roster: N units · updated …"; **Refresh** pulls right away). The server
+also re-pulls every 6 hours in the background (`ROSTER_REFRESH_HOURS`, 0 = off),
+and if the game can't be reached it hands out its last copy.
 
 Scanning the screen (GAC map, with the opponent's defense squads showing):
 

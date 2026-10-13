@@ -89,7 +89,8 @@ class ApiClient(private val prefs: Prefs) {
     fun match(unitIds: List<Int>, limit: Int = 4): List<TeamMatch> =
         ApiJson.parseMatches(JSONObject(get("/api/counters/match?unit_ids=${unitIds.joinToString(",")}&limit=$limit")))
 
-    /** GET /api/roster/:allyCode - game ids of every unit you own. */
-    fun fetchOwnedDefinitionIds(allyCode: String): Set<String> =
-        ApiJson.parseOwnedDefinitionIds(JSONObject(get("/api/roster/$allyCode")))
+    /** GET /api/roster/:allyCode - game ids of every unit you own (the server
+     * pulls them from the game, or gives its last copy if the game is down). */
+    fun fetchRoster(allyCode: String): Roster =
+        ApiJson.parseRoster(JSONObject(get("/api/roster/$allyCode")))
 }

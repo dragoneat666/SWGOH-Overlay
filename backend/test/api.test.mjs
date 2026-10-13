@@ -2,7 +2,10 @@ import { test, before, after, describe } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { startTestEnv } from "./helpers.mjs";
+
+const require = createRequire(import.meta.url);
 
 let env;
 let api;
@@ -531,16 +534,76 @@ describe("roster", () => {
 
     assert.equal(env.comlinkState.requests[0].body.payload.allyCode, "123456789");
 
-    // Second pull upserts rather than duplicating
-    await api("GET", `/api/roster/${ALLY}`);
-    const { rows } = await env.db.query(
-      "SELECT COUNT(*)::int AS n FROM roster_units WHERE ally_code = '123456789'"
+    assert.equal(res.body.stale, false);
+    assert.ok(Date.now() - Date.parse(res.body.fetched_at) < 60000);
+
+    const count = async (table) =>
+      (await env.db.query(`SELECT COUNT(*)::int AS n FROM ${table} WHERE ally_code = '123456789'`)).rows[0].n;
+
+    // Same roster again: rows are upserted, and no duplicate raw snapshot.
+    const again = await api("GET", `/api/roster/${ALLY}`);
+    assert.equal(await count("roster_units"), 3);
+    assert.equal(await count("roster_snapshots"), 1, "unchanged roster isn't archived twice");
+    assert.equal(again.body.snapshot_id, res.body.snapshot_id);
+
+    // A newly unlocked unit: archived as a new snapshot.
+    const base = env.comlinkState.routes["/player"];
+    env.comlinkState.routes["/player"] = (body) => {
+      const out = base(body);
+      out.body.rosterUnit.push({ definitionId: "JEDIKNIGHTLUKE:SEVEN_STAR", currentTier: 13, relic: { currentTier: 5 } });
+      return out;
+    };
+    const unlocked = await api("GET", `/api/roster/${ALLY}`);
+    assert.equal(unlocked.body.unit_count, 4);
+    assert.equal(await count("roster_units"), 4);
+    assert.equal(await count("roster_snapshots"), 2);
+    assert.notEqual(unlocked.body.snapshot_id, res.body.snapshot_id);
+  });
+
+  test("Comlink down: the last pulled roster, marked stale", async () => {
+    env.comlinkState.routes["/player"] = () => ({ status: 500, body: { message: "game servers are down" } });
+    const res = await api("GET", `/api/roster/${ALLY}`);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.stale, true);
+    assert.equal(res.body.unit_count, 4);
+    assert.ok(res.body.units.some((x) => x.unit_definition_id === "JEDIKNIGHTLUKE"));
+    assert.match(res.body.error, /500/);
+    assert.ok(Date.now() - Date.parse(res.body.fetched_at) < 60000);
+
+    // Never pulled before: nothing to fall back on.
+    assert.equal((await api("GET", "/api/roster/987654321")).status, 500);
+  });
+
+  test("background refresh re-pulls ally codes the phone uses", async () => {
+    const { refreshActiveRosters, startRosterRefresh } = require("../src/rosterSync");
+    env.comlinkState.routes["/player"] = (body) => ({
+      body: { name: "Test Player", rosterUnit: [{ definitionId: "VADER:SEVEN_STAR", currentTier: 13 }] },
+    });
+    // 987654321 was asked for (and failed) above; one more asked for long ago.
+    await env.db.query(
+      "INSERT INTO roster_sync (ally_code, last_requested_at) VALUES ('111222333', now() - interval '40 days')"
     );
-    assert.equal(rows[0].n, 3);
-    const snaps = await env.db.query(
-      "SELECT COUNT(*)::int AS n FROM roster_snapshots WHERE ally_code = '123456789'"
-    );
-    assert.equal(snaps.rows[0].n, 2, "raw snapshots are append-only");
+    env.comlinkState.requests.length = 0;
+    assert.deepEqual(await refreshActiveRosters(), { refreshed: 2, failed: 0 });
+    const asked = env.comlinkState.requests.map((r) => r.body.payload.allyCode).sort();
+    assert.deepEqual(asked, ["123456789", "987654321"], "not the one unused for 40 days");
+    const sync = (await env.db.query("SELECT * FROM roster_sync WHERE ally_code = '123456789'")).rows[0];
+    assert.equal(sync.player_name, "Test Player");
+    assert.equal(sync.last_error, null);
+    assert.ok(sync.last_pulled_at);
+
+    // Off switch.
+    const before = process.env.ROSTER_REFRESH_HOURS;
+    process.env.ROSTER_REFRESH_HOURS = "0";
+    const log = console.log;
+    console.log = () => {};
+    try {
+      assert.equal(startRosterRefresh(), null);
+    } finally {
+      console.log = log;
+      if (before === undefined) delete process.env.ROSTER_REFRESH_HOURS;
+      else process.env.ROSTER_REFRESH_HOURS = before;
+    }
   });
 
   test("rejects bad ally codes", async () => {

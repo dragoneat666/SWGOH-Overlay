@@ -35,7 +35,10 @@ ally code) and against squads you've already committed to this GAC round.
 ## Data model philosophy
 
 - Store the **full raw JSON** from every Comlink roster pull, timestamped,
-  append-only, never overwritten — even fields we don't use yet. This is
+  append-only, never overwritten — even fields we don't use yet. A pull
+  whose roster is identical to the last snapshot doesn't add a copy
+  (roster_snapshots.roster_hash), so the timed refresh below doesn't pile
+  up duplicates. This is
   cheap (self-hosted, small payloads) and means a future feature can be
   backfilled from history instead of needing to have been planned for in
   advance. Only build normalized/typed columns for fields actually in use
@@ -161,6 +164,23 @@ ally code) and against squads you've already committed to this GAC round.
   what the overlay should call once it can read the screen; it also works
   with just a leader ("every team led by X").
 
+## Offense search ("what does my squad beat?")
+
+- Recorded counter squads match an entered squad when they have the **same
+  leader** and share enough units: all of them when 3 or fewer are entered
+  (a partial squad finds the full squads it's part of), at least 3 when 4-5
+  are entered. Teams keep a core and swap the last slots (Jedi Master Kenobi
+  + Commander Ahsoka + Snips, then General Kenobi / Padmé / Mace / ...), so
+  an exact-only match missed most of the data.
+- One result per defense team - its closest recorded squad (most shared
+  units, then best win rate). Results are ordered closest first, then by win
+  rate, and close ones list the units that differ.
+- "Popular teams" groups recorded attack squads by core (squadGroups.js):
+  per leader, the most-recorded squad seeds a group whose core is the leader
+  plus that squad's 2 members used most across the leader's squads; every
+  squad containing the core joins. So any two squads in a group share 3+
+  units, the same bar as the search, and "See matchups" searches the core.
+
 ## Unit catalog
 
 - Unit names + `definition_id`s come from the game's own data via Comlink
@@ -218,6 +238,19 @@ ally code) and against squads you've already committed to this GAC round.
   "reset squad tracking?" rather than deciding silently. Also exposed as a
   manual "Reset Squads" button in Settings for any time you want to clear it
   early.
+
+## Roster refresh
+
+- Your roster (which units you own) is pulled from the game via Comlink.
+  The overlay pulls it when it starts, when you tap Refresh, and when you
+  open the panel with a copy older than 6 hours (at most every 10 minutes
+  while that keeps failing). The panel shows how old it is.
+- The server also re-pulls on its own every `ROSTER_REFRESH_HOURS`
+  (default 6, 0 = off) for every ally code a phone asked for in the last 30
+  days (roster_sync). The server only learns ally codes from the phone's
+  requests - none is configured or written in code.
+- If Comlink can't be reached, `GET /api/roster` returns the last pulled
+  roster with `stale: true` and its `fetched_at` instead of an error.
 
 ## Explicitly out of scope for now
 

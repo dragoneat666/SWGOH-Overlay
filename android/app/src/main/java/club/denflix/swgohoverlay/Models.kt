@@ -169,4 +169,48 @@ object ApiJson {
             .mapNotNull { arr.optJSONObject(it)?.optString("unit_definition_id")?.takeIf { s -> s.isNotBlank() } }
             .toSet()
     }
+
+    fun parseRoster(o: JSONObject): Roster = Roster(
+        ownedDefinitionIds = parseOwnedDefinitionIds(o),
+        fetchedAtMillis = o.optString("fetched_at").takeIf { it.isNotBlank() }
+            ?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() },
+        stale = o.optBoolean("stale", false),
+    )
+}
+
+/** GET /api/roster, reduced to what the app uses. */
+data class Roster(
+    val ownedDefinitionIds: Set<String>,
+    /** When the server pulled it from the game, or null if it didn't say. */
+    val fetchedAtMillis: Long?,
+    /** The game couldn't be reached - this is the server's last copy. */
+    val stale: Boolean,
+) {
+    /** When this roster was pulled from the game, on the phone's clock: a
+     * fresh pull is from just now (so a server clock that's off doesn't
+     * matter); the server's copy is as old as it says (0 = unknown). */
+    fun pulledAtMillis(nowMillis: Long): Long = if (stale) fetchedAtMillis ?: 0L else nowMillis
+}
+
+/** How old the phone's copy of your roster is, and when to get a new one. */
+object RosterAge {
+    /** Pull again when opening the panel if the copy is older than this. */
+    const val MAX_AGE_MS = 6 * 60 * 60 * 1000L
+    /** After a failed pull, wait this long before trying again on its own. */
+    const val RETRY_MS = 10 * 60 * 1000L
+
+    fun isOld(fetchedAtMillis: Long, nowMillis: Long): Boolean =
+        fetchedAtMillis <= 0 || nowMillis - fetchedAtMillis > MAX_AGE_MS
+
+    /** "just now", "25 min ago", "3 h ago", "2 days ago" - null if unknown. */
+    fun describe(fetchedAtMillis: Long, nowMillis: Long): String? {
+        if (fetchedAtMillis <= 0) return null
+        val minutes = (nowMillis - fetchedAtMillis).coerceAtLeast(0) / 60_000
+        return when {
+            minutes < 1 -> "just now"
+            minutes < 60 -> "$minutes min ago"
+            minutes < 48 * 60 -> "${minutes / 60} h ago"
+            else -> "${minutes / (24 * 60)} days ago"
+        }
+    }
 }

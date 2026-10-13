@@ -54,6 +54,35 @@ class ApiJsonTest {
         assertEquals(setOf("VADER", "GLREY"), owned)
     }
 
+    @Test fun parsesRoster() {
+        val fresh = ApiJson.parseRoster(JSONObject(
+            """{"ally_code":"123456789","fetched_at":"2026-10-12T18:00:00.000Z","stale":false,"units":[{"unit_definition_id":"VADER"}]}"""
+        ))
+        assertEquals(setOf("VADER"), fresh.ownedDefinitionIds)
+        assertEquals(java.time.Instant.parse("2026-10-12T18:00:00Z").toEpochMilli(), fresh.fetchedAtMillis)
+        assertEquals(false, fresh.stale)
+        val cached = ApiJson.parseRoster(JSONObject("""{"stale":true,"error":"Comlink down","units":[]}"""))
+        assertEquals(true, cached.stale)
+        assertNull(cached.fetchedAtMillis)
+        // Fresh pulls count from the phone's own clock; old copies keep their time.
+        assertEquals(42L, fresh.pulledAtMillis(42L))
+        assertEquals(0L, cached.pulledAtMillis(42L))
+        assertEquals(7L, fresh.copy(stale = true, fetchedAtMillis = 7L).pulledAtMillis(42L))
+    }
+
+    @Test fun rosterAge() {
+        val now = 1_000_000_000_000L
+        val min = 60_000L
+        assertNull(RosterAge.describe(0, now))
+        assertEquals("just now", RosterAge.describe(now - 20_000, now))
+        assertEquals("25 min ago", RosterAge.describe(now - 25 * min, now))
+        assertEquals("3 h ago", RosterAge.describe(now - 200 * min, now))
+        assertEquals("2 days ago", RosterAge.describe(now - 50 * 60 * min, now))
+        assertEquals(true, RosterAge.isOld(0, now))
+        assertEquals(false, RosterAge.isOld(now - 5 * 60 * min, now))
+        assertEquals(true, RosterAge.isOld(now - 7 * 60 * min, now))
+    }
+
     @Test fun parsesScanResults() {
         val scan = ApiJson.parseScan(JSONObject(
             """

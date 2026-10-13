@@ -50,9 +50,16 @@ class SettingsActivity : AppCompatActivity() {
                     else "✓ ${units.size} units in the library"
                     if (prefs.allyCode.length == 9) {
                         try {
-                            val owned = api.fetchOwnedDefinitionIds(prefs.allyCode)
-                            prefs.ownedDefinitionIds = owned
-                            lines += "✓ Roster loaded: ${owned.size} units"
+                            val roster = api.fetchRoster(prefs.allyCode)
+                            prefs.ownedDefinitionIds = roster.ownedDefinitionIds
+                            prefs.rosterFetchedAtMillis = roster.pulledAtMillis(System.currentTimeMillis())
+                            val count = roster.ownedDefinitionIds.size
+                            lines += if (roster.stale) {
+                                val age = RosterAge.describe(prefs.rosterFetchedAtMillis, System.currentTimeMillis())
+                                "⚠ The game didn't answer - using the server's copy of your roster ($count units, ${age ?: "age unknown"})"
+                            } else {
+                                "✓ Roster loaded: $count units"
+                            }
                         } catch (e: Exception) {
                             lines += "✗ Roster: ${e.message}"
                         }

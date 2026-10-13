@@ -1025,6 +1025,21 @@ input.invalid {
 .offense-full {
   margin-top: 8px;
 }
+.offense-full p {
+  margin: 4px 0 6px;
+}
+.popular-flex {
+  margin: 4px 0 2px;
+}
+.match-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px solid var(--muted);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
 .popular-squad {
   display: flex;
   align-items: center;

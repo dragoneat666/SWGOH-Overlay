@@ -49,6 +49,11 @@ class Prefs(context: Context) {
         get() = sp.getString("units_cache", "") ?: ""
         set(value) = sp.edit().putString("units_cache", value).apply()
 
+    /** When the server pulled the roster below from the game (0 = unknown). */
+    var rosterFetchedAtMillis: Long
+        get() = sp.getLong("roster_fetched_at", 0L)
+        set(value) = sp.edit().putLong("roster_fetched_at", value).apply()
+
     /** Game ids you own, from the last successful roster pull (null = never pulled). */
     var ownedDefinitionIds: Set<String>?
         get() = if (sp.contains("owned_ids")) sp.getStringSet("owned_ids", emptySet())?.toSet() else null

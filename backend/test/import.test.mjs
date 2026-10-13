@@ -9,6 +9,7 @@ import { blank, drawFace } from "../../shared/scan/synthetic.mjs";
 
 const require = createRequire(import.meta.url);
 const { counterScore, rankRecommendations } = require("../src/ranking");
+const { groupByCore } = require("../src/squadGroups");
 const { PNG } = require("pngjs");
 
 let env;
@@ -43,6 +44,27 @@ function fingerprint(seed, noise = 0) {
   const n = Math.sqrt(v.reduce((a, b) => a + b * b, 0));
   return v.map((a) => a / n);
 }
+
+describe("squad groups", () => {
+  test("variants of a team are grouped by leader + its 2 most-used members", () => {
+    // Leader 1 with core 2+3 and swapped last slots; one squad without the core.
+    const groups = groupByCore([
+      { id: 10, unitIds: [1, 2, 3, 4, 5], records: 40 },
+      { id: 11, unitIds: [1, 3, 2, 6, 5], records: 30 },
+      { id: 12, unitIds: [1, 2, 3, 7, 8], records: 5 },
+      { id: 13, unitIds: [1, 2, 6, 7, 9], records: 3 },
+      { id: 14, unitIds: [1], records: 1 },
+      // Another leader with the same members is another team.
+      { id: 20, unitIds: [2, 1, 3, 4, 5], records: 9 },
+    ]);
+    assert.deepEqual(groups, [
+      { core: [1, 2, 3], squadIds: [10, 11, 12] },
+      { core: [1, 2, 6], squadIds: [13] },
+      { core: [1], squadIds: [14] },
+      { core: [2, 1, 3], squadIds: [20] },
+    ]);
+  });
+});
 
 describe("ranking", () => {
   test("expected banners, with small samples pulled toward 75%", () => {
@@ -218,6 +240,72 @@ describe("offense", () => {
     const iTop = popular.body.squads.indexOf(top);
     const iOther = popular.body.squads.findIndex((s) => s.units[0].name === "Other Lead");
     assert.ok(iTop < iOther, "beating more defense teams ranks higher");
+  });
+});
+
+describe("offense: close matches", () => {
+  test("a squad sharing 3+ units with recorded ones (same leader) counts, closest first", async () => {
+    const k = {};
+    for (const name of ["JMK", "CAT", "Snips", "GK", "Padme", "Mace", "Fives", "Plo", "D1", "D2", "D3", "D4", "D5", "Not Lead"]) {
+      k[name] = (await api("POST", "/api/units", { body: { name } })).body.id;
+    }
+    const sq = (...names) => names.map((n) => k[n]);
+    const imported = await api("POST", "/api/counters/import", {
+      body: {
+        rows: [
+          // D1: two variants on record - the closer one should be picked.
+          { defender_unit_ids: [k.D1], counter_unit_ids: sq("JMK", "CAT", "Snips", "GK", "Padme"), seen_count: 500, win_rate: 97, avg_banners: 64 },
+          { defender_unit_ids: [k.D1], counter_unit_ids: sq("JMK", "CAT", "Snips", "Fives", "Mace"), seen_count: 50, win_rate: 90, avg_banners: 61 },
+          // D2: shares 3 (JMK, CAT, Snips).
+          { defender_unit_ids: [k.D2], counter_unit_ids: sq("JMK", "CAT", "Snips", "GK", "Mace"), seen_count: 300, win_rate: 99, avg_banners: 65 },
+          // D3: shares only 2 - not close enough.
+          { defender_unit_ids: [k.D3], counter_unit_ids: sq("JMK", "CAT", "GK", "Padme", "Mace"), seen_count: 300, win_rate: 99, avg_banners: 65 },
+          // D4: same units, but someone else leads - a different team.
+          { defender_unit_ids: [k.D4], counter_unit_ids: sq("Not Lead", "JMK", "CAT", "Snips", "Fives"), seen_count: 300, win_rate: 99, avg_banners: 65 },
+          // D5: exactly the entered squad.
+          { defender_unit_ids: [k.D5], counter_unit_ids: sq("JMK", "CAT", "Snips", "Fives", "Plo"), seen_count: 20, win_rate: 85, avg_banners: 60 },
+        ],
+      },
+    });
+    assert.equal(imported.status, 200, JSON.stringify(imported.body));
+
+    const mine = sq("JMK", "CAT", "Snips", "Fives", "Plo");
+    const res = await api("GET", `/api/counters/offense?unit_ids=${mine.join(",")}`);
+    assert.equal(res.status, 200);
+    const results = res.body.results;
+    assert.deepEqual(results.map((r) => r.defender.units[0].name), ["D5", "D1", "D2"], "exact, then 4 shared, then 3");
+    assert.deepEqual(results.map((r) => r.shared), [5, 4, 3]);
+    assert.deepEqual(results.map((r) => r.exact), [true, false, false]);
+
+    // D1: the variant with Fives (4 shared) beats the more popular one (3 shared).
+    const d1 = results[1];
+    assert.equal(d1.win_rate, 90);
+    assert.deepEqual(d1.yours_not_used.map((u) => u.name), ["Plo"]);
+    assert.deepEqual(d1.theirs_extra.map((u) => u.name), ["Mace"]);
+    const d2 = results[2];
+    assert.deepEqual(d2.yours_not_used.map((u) => u.name).sort(), ["Fives", "Plo"]);
+    assert.deepEqual(d2.theirs_extra.map((u) => u.name).sort(), ["GK", "Mace"]);
+    assert.deepEqual(results[0].yours_not_used, []);
+
+    // Leader alone: every squad it leads, one (the best) per defense team.
+    const leadOnly = await api("GET", `/api/counters/offense?unit_ids=${k.JMK}`);
+    assert.deepEqual(leadOnly.body.results.map((r) => r.defender.units[0].name), ["D2", "D3", "D1", "D5"]);
+    assert.equal(leadOnly.body.results[2].win_rate, 97, "D1's better record");
+
+    // Popular: the JMK variants are one team (core JMK + CAT + Snips) that
+    // beats D1, D2 and D5 with 4 variants (D3's squad lacks Snips, so it's its own entry).
+    const popular = (await api("GET", "/api/counters/offense/popular?limit=50")).body.squads;
+    const jmk = popular.filter((p) => p.units[0].name === "JMK");
+    assert.deepEqual(jmk[0].units.map((u) => u.name), ["JMK", "CAT", "Snips"]);
+    assert.equal(jmk[0].variants, 4);
+    assert.equal(jmk[0].defense_teams, 3);
+    assert.equal(jmk[0].avg_win_rate, 92.8); // (97 + 90 + 99 + 85) / 4
+    assert.deepEqual(jmk[0].flex.slice(0, 2).map((u) => [u.name, u.squads]), [["Fives", 2], ["GK", 2]]);
+    assert.equal(jmk.length, 2, "D3's squad without Snips is a separate entry");
+
+    // Three entered units must all be in the squad.
+    const three = await api("GET", `/api/counters/offense?unit_ids=${sq("JMK", "GK", "Padme").join(",")}`);
+    assert.deepEqual(three.body.results.map((r) => r.defender.units[0].name).sort(), ["D1", "D3"]);
   });
 });
 

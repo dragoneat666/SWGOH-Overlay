@@ -103,7 +103,10 @@ class OverlayService : Service() {
     private var units: List<GameUnit> = emptyList()
     private var unitsError: String? = null
     private var owned: Set<String>? = null
-    private var rosterStatus: String = ""
+    private var rosterLoading = false
+    /** Why the last roster pull didn't give a fresh roster (null = it did). */
+    private var rosterError: String? = null
+    private var rosterAttemptAtMillis = 0L
     private var knownTeams: List<Squad>? = null
     private var knownTeamsError: String? = null
 
@@ -235,23 +238,47 @@ class OverlayService : Service() {
 
     private fun refreshRoster() {
         val allyCode = prefs.allyCode
-        if (allyCode.isBlank()) {
-            rosterStatus = "No ally code in Settings - counters aren't checked against your roster."
+        if (allyCode.isBlank() || rosterLoading) {
             render()
             return
         }
-        rosterStatus = "Loading your roster…"
+        rosterLoading = true
+        rosterAttemptAtMillis = System.currentTimeMillis()
         render()
-        runAsync({ api.fetchOwnedDefinitionIds(allyCode) }) { ids, err ->
-            if (ids != null) {
-                owned = ids
-                prefs.ownedDefinitionIds = ids
-                rosterStatus = "Roster loaded: ${ids.size} units."
+        runAsync({ api.fetchRoster(allyCode) }) { roster, err ->
+            rosterLoading = false
+            if (roster != null) {
+                owned = roster.ownedDefinitionIds
+                prefs.ownedDefinitionIds = roster.ownedDefinitionIds
+                prefs.rosterFetchedAtMillis = roster.pulledAtMillis(System.currentTimeMillis())
+                rosterError = if (roster.stale) "the game didn't answer" else null
             } else {
-                rosterStatus = "Roster didn't load (${errorText(err)})" +
-                    if (owned != null) " - using the last copy." else "."
+                rosterError = errorText(err)
             }
             render()
+        }
+    }
+
+    /** New units get unlocked between GAC rounds - re-pull an old copy when
+     * the panel opens (not more often than RosterAge.RETRY_MS if that fails). */
+    private fun refreshRosterIfOld() {
+        val now = System.currentTimeMillis()
+        if (prefs.allyCode.isBlank() || rosterLoading) return
+        if (!RosterAge.isOld(prefs.rosterFetchedAtMillis, now)) return
+        if (now - rosterAttemptAtMillis < RosterAge.RETRY_MS) return
+        refreshRoster()
+    }
+
+    private fun rosterStatusText(): String {
+        if (prefs.allyCode.isBlank()) return "No ally code in Settings - counters aren't checked against your roster."
+        val ids = owned
+            ?: return if (rosterLoading) "Loading your roster…" else "Roster didn't load (${rosterError ?: "unknown error"})."
+        val age = RosterAge.describe(prefs.rosterFetchedAtMillis, System.currentTimeMillis())
+        val base = "Roster: ${ids.size} units" + (age?.let { " · updated $it" } ?: "")
+        return when {
+            rosterLoading -> "$base · updating…"
+            rosterError != null -> "$base · couldn't update ($rosterError)"
+            else -> base
         }
     }
 
@@ -630,6 +657,7 @@ class OverlayService : Service() {
         }
         // Pick up counters added in the web UI since last time.
         refreshKnownTeams()
+        refreshRosterIfOld()
         if (units.isEmpty() || unitsError != null) refreshUnits()
         if (selected.isNotEmpty()) scheduleMatch(immediate = true) else render()
     }
@@ -1017,7 +1045,7 @@ class OverlayService : Service() {
         }
 
         val rosterRow = row {
-            addView(text(rosterStatus, 13f, R.color.muted), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(text(rosterStatusText(), 13f, R.color.muted), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             if (prefs.allyCode.isNotBlank()) addView(text("Refresh", 13f, R.color.link))
         }
         if (prefs.allyCode.isNotBlank()) rosterRow.setOnClickListener { refreshRoster() }

@@ -37,6 +37,7 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       API_TOKEN: ${API_TOKEN}
       COMLINK_URL: ${COMLINK_URL:-http://comlink:3000}
+      ROSTER_REFRESH_HOURS: ${ROSTER_REFRESH_HOURS:-6}
       PORT: 4001
     ports:
       - "${API_PORT:-4001}:4001"

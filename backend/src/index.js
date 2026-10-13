@@ -2,6 +2,7 @@ require("dotenv").config();
 const { createApp } = require("./app");
 const { migrateWithRetry } = require("./migrate");
 const { refreshFingerprints } = require("./faceFingerprints");
+const { startRosterRefresh } = require("./rosterSync");
 
 async function main() {
   if (!process.env.API_TOKEN) {
@@ -19,6 +20,7 @@ async function main() {
   createApp().listen(port, () => {
     console.log(`SWGOH Overlay backend listening on :${port}`);
   });
+  startRosterRefresh();
 }
 
 main().catch((err) => {
